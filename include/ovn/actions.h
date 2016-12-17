@@ -70,7 +70,8 @@ struct simap;
     OVNACT(PUT_ND,        ovnact_put_mac_bind)      \
     OVNACT(PUT_DHCPV4_OPTS, ovnact_put_dhcp_opts)   \
     OVNACT(PUT_DHCPV6_OPTS, ovnact_put_dhcp_opts)   \
-    OVNACT(SET_QUEUE,       ovnact_set_queue)
+    OVNACT(SET_QUEUE,       ovnact_set_queue)       \
+    OVNACT(LOG,             ovnact_null)
 
 /* enum ovnact_type, with a member OVNACT_<ENUM> for each action. */
 enum OVS_PACKED_ENUM ovnact_type {
@@ -385,6 +386,12 @@ enum action_opcode {
      *   - Any number of DHCPv6 options.
      */
     ACTION_OPCODE_PUT_DHCPV6_OPTS,
+
+    /* "log".
+     *
+     * Takes no arguments.
+     */
+    ACTION_OPCODE_LOG,
 };
 
 /* Header. */
