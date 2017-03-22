@@ -1774,6 +1774,7 @@ struct ovn_lflow {
     uint16_t priority;
     char *match;
     char *actions;
+    char *stage_hint;
     const char *where;
 };
 
@@ -1799,13 +1800,15 @@ ovn_lflow_equal(const struct ovn_lflow *a, const struct ovn_lflow *b)
 static void
 ovn_lflow_init(struct ovn_lflow *lflow, struct ovn_datapath *od,
                enum ovn_stage stage, uint16_t priority,
-               char *match, char *actions, const char *where)
+               char *match, char *actions, char *stage_hint,
+               const char *where)
 {
     lflow->od = od;
     lflow->stage = stage;
     lflow->priority = priority;
     lflow->match = match;
     lflow->actions = actions;
+    lflow->stage_hint = stage_hint;
     lflow->where = where;
 }
 
@@ -1813,20 +1816,28 @@ ovn_lflow_init(struct ovn_lflow *lflow, struct ovn_datapath *od,
 static void
 ovn_lflow_add_at(struct hmap *lflow_map, struct ovn_datapath *od,
                  enum ovn_stage stage, uint16_t priority,
-                 const char *match, const char *actions, const char *where)
+                 const char *match, const char *actions,
+                 const char *stage_hint, const char *where)
 {
     ovs_assert(ovn_stage_to_datapath_type(stage) == ovn_datapath_get_type(od));
 
     struct ovn_lflow *lflow = xmalloc(sizeof *lflow);
     ovn_lflow_init(lflow, od, stage, priority,
-                   xstrdup(match), xstrdup(actions), where);
+                   xstrdup(match), xstrdup(actions),
+                   stage_hint?xstrdup(stage_hint):NULL,
+                   where);
     hmap_insert(lflow_map, &lflow->hmap_node, ovn_lflow_hash(lflow));
 }
 
 /* Adds a row with the specified contents to the Logical_Flow table. */
+#define ovn_lflow_add_with_hint(LFLOW_MAP, OD, STAGE, PRIORITY, MATCH, \
+                                ACTIONS, STAGE_HINT) \
+    ovn_lflow_add_at(LFLOW_MAP, OD, STAGE, PRIORITY, MATCH, ACTIONS, \
+                     STAGE_HINT, OVS_SOURCE_LOCATOR)
+
 #define ovn_lflow_add(LFLOW_MAP, OD, STAGE, PRIORITY, MATCH, ACTIONS) \
-    ovn_lflow_add_at(LFLOW_MAP, OD, STAGE, PRIORITY, MATCH, ACTIONS,  \
-                     OVS_SOURCE_LOCATOR)
+    ovn_lflow_add_with_hint(LFLOW_MAP, OD, STAGE, PRIORITY, MATCH, \
+                            ACTIONS, NULL)
 
 static struct ovn_lflow *
 ovn_lflow_find(struct hmap *lflows, struct ovn_datapath *od,
@@ -1836,7 +1847,7 @@ ovn_lflow_find(struct hmap *lflows, struct ovn_datapath *od,
     struct ovn_lflow target;
     ovn_lflow_init(&target, od, stage, priority,
                    CONST_CAST(char *, match), CONST_CAST(char *, actions),
-                   NULL);
+                   NULL, NULL);
 
     struct ovn_lflow *lflow;
     HMAP_FOR_EACH_WITH_HASH (lflow, hmap_node, ovn_lflow_hash(&target),
@@ -1855,6 +1866,7 @@ ovn_lflow_destroy(struct hmap *lflows, struct ovn_lflow *lflow)
         hmap_remove(lflows, &lflow->hmap_node);
         free(lflow->match);
         free(lflow->actions);
+        free(lflow->stage_hint);
         free(lflow);
     }
 }
@@ -2625,6 +2637,7 @@ build_acls(struct northd_context *ctx, struct ovn_datapath *od,
         bool ingress = !strcmp(acl->direction, "from-lport") ? true :false;
         enum ovn_stage stage = ingress ? S_SWITCH_IN_ACL : S_SWITCH_OUT_ACL;
 
+        char *stage_hint = xasprintf("%08x", acl->header_.uuid.parts[0]);
         if (!strcmp(acl->action, "allow")
             || !strcmp(acl->action, "allow-related")) {
             char *log_action = xasprintf(" log(type=%u);", LOG_TYPE_ACL_ALLOW);
@@ -2637,9 +2650,11 @@ build_acls(struct northd_context *ctx, struct ovn_datapath *od,
             if (!has_stateful) {
                 ds_put_format(&actions, "%s next;",
                               acl->log ? log_action : "");
-                ovn_lflow_add(lflows, od, stage,
-                              acl->priority + OVN_ACL_PRI_OFFSET, acl->match,
-                              ds_cstr(&actions));
+                ovn_lflow_add_with_hint(lflows, od, stage,
+                                        acl->priority + OVN_ACL_PRI_OFFSET,
+                                        acl->match,
+                                        ds_cstr(&actions),
+                                        stage_hint);
             } else {
                 struct ds match = DS_EMPTY_INITIALIZER;
 
@@ -2662,9 +2677,10 @@ build_acls(struct northd_context *ctx, struct ovn_datapath *od,
                 ds_put_format(&actions,
                               REGBIT_CONNTRACK_COMMIT" = 1;%s next;",
                               acl->log ? log_action : "");
-                ovn_lflow_add(lflows, od, stage,
-                              acl->priority + OVN_ACL_PRI_OFFSET,
-                              ds_cstr(&match), ds_cstr(&actions));
+                ovn_lflow_add_with_hint(lflows, od, stage,
+                                        acl->priority + OVN_ACL_PRI_OFFSET,
+                                        ds_cstr(&match), ds_cstr(&actions),
+                                        stage_hint);
 
                 /* Match on traffic in the request direction for an established
                  * connection tracking entry that has not been marked for
@@ -2680,9 +2696,10 @@ build_acls(struct northd_context *ctx, struct ovn_datapath *od,
                               acl->match);
                 ds_put_format(&actions, "%s next;",
                               acl->log ? log_action : "");
-                ovn_lflow_add(lflows, od, stage,
-                              acl->priority + OVN_ACL_PRI_OFFSET,
-                              ds_cstr(&match), ds_cstr(&actions));
+                ovn_lflow_add_with_hint(lflows, od, stage,
+                                        acl->priority + OVN_ACL_PRI_OFFSET,
+                                        ds_cstr(&match), ds_cstr(&actions),
+                                        stage_hint);
 
                 ds_destroy(&match);
             }
@@ -2709,9 +2726,10 @@ build_acls(struct northd_context *ctx, struct ovn_datapath *od,
                               "(!ct.est || (ct.est && ct_label.blocked == 1)) "
                               "&& (%s)",
                               acl->match);
-                ovn_lflow_add(lflows, od, stage, acl->priority +
+                ovn_lflow_add_with_hint(lflows, od, stage, acl->priority +
                         OVN_ACL_PRI_OFFSET, ds_cstr(&match),
-                        acl->log ? "log; /* drop */" : "drop;");
+                        acl->log ? "log; /* drop */" : "drop;",
+                        stage_hint);
 
                 /* For an existing connection without ct_label set, we've
                  * encountered a policy change. ACLs previously allowed
@@ -2730,21 +2748,24 @@ build_acls(struct northd_context *ctx, struct ovn_datapath *od,
                               acl->match);
                 ds_put_format(&actions, "ct_commit(ct_label=1/1);%s",
                               acl->log ? " log;" : "");
-                ovn_lflow_add(lflows, od, stage,
-                              acl->priority + OVN_ACL_PRI_OFFSET,
-                              ds_cstr(&match), ds_cstr(&actions));
+                ovn_lflow_add_with_hint(lflows, od, stage,
+                                        acl->priority + OVN_ACL_PRI_OFFSET,
+                                        ds_cstr(&match), ds_cstr(&actions),
+                                        stage_hint);
 
             } else {
                 /* There are no stateful ACLs in use on this datapath,
                  * so a "drop" ACL is simply the "drop" logical flow action
                  * in all cases. */
-                ovn_lflow_add(lflows, od, stage,
-                              acl->priority + OVN_ACL_PRI_OFFSET,
-                              acl->match, acl->log ? "log; /* drop */"
-                                                   : "drop;");
+                ovn_lflow_add_with_hint(lflows, od, stage,
+                                        acl->priority + OVN_ACL_PRI_OFFSET,
+                                        acl->match, acl->log ? "log; /* drop */"
+                                                             : "drop;",
+                                        stage_hint);
             }
             ds_destroy(&match);
         }
+        free(stage_hint);
     }
 
     /* Add 34000 priority flow to allow DHCP reply from ovn-controller to all
@@ -5122,11 +5143,14 @@ build_lflows(struct northd_context *ctx, struct hmap *datapaths,
 #endif
         const char *where = slash ? slash + 1 : lflow->where;
 
-        const struct smap ids = SMAP_CONST2(
-            &ids,
-            "stage-name", ovn_stage_to_str(lflow->stage),
-            "source", where);
+        struct smap ids = SMAP_INITIALIZER(&ids);
+        smap_add(&ids, "stage-name", ovn_stage_to_str(lflow->stage));
+        smap_add(&ids, "source", where);
+        if (lflow->stage_hint) {
+            smap_add(&ids, "stage-hint", lflow->stage_hint);
+        }
         sbrec_logical_flow_set_external_ids(sbflow, &ids);
+        smap_destroy(&ids);
 
         ovn_lflow_destroy(&lflows, lflow);
     }
