@@ -484,6 +484,23 @@ get_nb_cfg(struct ovsdb_idl *idl)
     return sb ? sb->nb_cfg : 0;
 }
 
+/* Contains mapping of localvifs to OF ports for detecting if the physical
+ * configuration of the switch has changed. */
+static struct simap localvif_to_ofport =
+    SIMAP_INITIALIZER(&localvif_to_ofport);
+
+/* Contains the list of known tunnels. */
+static struct hmap tunnels = HMAP_INITIALIZER(&tunnels);
+
+/* The last sequence number seen from the southbound IDL. */
+static unsigned int seqno = 0;
+
+void
+force_full_process(void)
+{
+    seqno = 0;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -576,6 +593,7 @@ main(int argc, char *argv[])
 
     /* Main loop. */
     exiting = false;
+    bool physical_change = true;
     while (!exiting) {
         /* Check OVN SB database. */
         char *new_ovnsb_remote = get_ovnsb_remote(ovs_idl_loop.idl);
@@ -613,10 +631,8 @@ main(int argc, char *argv[])
 
         struct ldatapath_index ldatapaths;
         struct lport_index lports;
-        struct mcgroup_index mcgroups;
         ldatapath_index_init(&ldatapaths, ctx.ovnsb_idl);
         lport_index_init(&lports, ctx.ovnsb_idl);
-        mcgroup_index_init(&mcgroups, ctx.ovnsb_idl);
 
         const struct sbrec_chassis *chassis = NULL;
         if (chassis_id) {
@@ -627,35 +643,49 @@ main(int argc, char *argv[])
         }
 
         if (br_int && chassis) {
+            enum mf_field_id mff_ovn_geneve = ofctrl_run(br_int,
+                                                         &pending_ct_zones);
+            if (detect_and_save_physical_changes(
+                &localvif_to_ofport, &tunnels, mff_ovn_geneve, br_int,
+                chassis)) {
+                physical_change = true;
+            }
+            unsigned int cur_seqno = ovsdb_idl_get_seqno(ovnsb_idl_loop.idl);
+
             struct shash addr_sets = SHASH_INITIALIZER(&addr_sets);
             addr_sets_init(&ctx, &addr_sets);
 
             patch_run(&ctx, br_int, chassis, &local_datapaths);
 
-            enum mf_field_id mff_ovn_geneve = ofctrl_run(br_int,
-                                                         &pending_ct_zones);
-
             pinctrl_run(&ctx, &lports, br_int, chassis, &local_datapaths);
             update_ct_zones(&local_lports, &local_datapaths, &ct_zones,
                             ct_zone_bitmap, &pending_ct_zones);
             if (ctx.ovs_idl_txn) {
+                if ((physical_change || seqno < cur_seqno) &&
+                    ofctrl_can_put()) {
+                    seqno = cur_seqno;
+                    physical_change = false;
 
-                commit_ct_zones(br_int, &pending_ct_zones);
+                    commit_ct_zones(br_int, &pending_ct_zones);
 
-                struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
-                lflow_run(&ctx, chassis, &lports, &mcgroups,
-                          &local_datapaths, &group_table, &ct_zones,
-                          &addr_sets, &flow_table);
+                    struct mcgroup_index mcgroups;
+                    mcgroup_index_init(&mcgroups, ctx.ovnsb_idl);
 
-                physical_run(&ctx, mff_ovn_geneve,
-                             br_int, chassis, &ct_zones, &lports,
-                             &flow_table, &local_datapaths);
+                    struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
+                    lflow_run(&ctx, chassis, &lports, &mcgroups,
+                              &local_datapaths, &group_table, &ct_zones,
+                              &addr_sets, &flow_table);
 
-                ofctrl_put(&flow_table, &pending_ct_zones,
-                           get_nb_cfg(ctx.ovnsb_idl));
+                    physical_run(&ctx, mff_ovn_geneve,
+                                 br_int, chassis, &ct_zones, &lports,
+                                 &flow_table, &local_datapaths);
 
-                hmap_destroy(&flow_table);
+                    ofctrl_put(&flow_table, &pending_ct_zones,
+                               get_nb_cfg(ctx.ovnsb_idl));
 
+                    hmap_destroy(&flow_table);
+                    mcgroup_index_destroy(&mcgroups);
+                }
                 if (ctx.ovnsb_idl_txn) {
                     int64_t cur_cfg = ofctrl_get_cur_cfg();
                     if (cur_cfg && cur_cfg != chassis->nb_cfg) {
@@ -693,7 +723,6 @@ main(int argc, char *argv[])
             free(pending_pkt.flow_s);
         }
 
-        mcgroup_index_destroy(&mcgroups);
         lport_index_destroy(&lports);
         ldatapath_index_destroy(&ldatapaths);
 

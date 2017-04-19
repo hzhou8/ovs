@@ -383,6 +383,8 @@ run_S_CLEAR_FLOWS(void)
     queue_msg(encode_group_mod(&gm));
     ofputil_uninit_group_mod(&gm);
 
+    force_full_process();
+
     /* Clear existing groups, to match the state of the switch. */
     if (groups) {
         ovn_group_table_clear(groups, true);
@@ -813,6 +815,20 @@ add_ct_flush_zone(uint16_t zone_id, struct ovs_list *msgs)
     ovs_list_push_back(msgs, &msg->list_node);
 }
 
+/* The flow table can be updated if the connection to the switch is up and
+ * in the correct state and not backlogged with existing flow_mods.  (Our
+ * criteria for being backlogged appear very conservative, but the socket
+ * between ovn-controller and OVS provides some buffering.) */
+bool
+ofctrl_can_put(void)
+{
+    if (state != S_UPDATE_FLOWS
+        || rconn_packet_counter_n_packets(tx_counter)) {
+        return false;
+    }
+    return true;
+}
+
 /* Replaces the flow table on the switch, if possible, by the flows added
  * with ofctrl_add_flow().
  *
@@ -831,14 +847,10 @@ void
 ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
            int64_t nb_cfg)
 {
-    /* The flow table can be updated if the connection to the switch is up and
-     * in the correct state and not backlogged with existing flow_mods.  (Our
-     * criteria for being backlogged appear very conservative, but the socket
-     * between ovn-controller and OVS provides some buffering.) */
-    if (state != S_UPDATE_FLOWS
-        || rconn_packet_counter_n_packets(tx_counter)) {
+    if (!ofctrl_can_put()) {
         ovn_flow_table_clear(flow_table);
         ovn_group_table_clear(groups, false);
+        force_full_process();
         return;
     }
 

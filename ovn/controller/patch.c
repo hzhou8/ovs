@@ -96,6 +96,7 @@ create_patch_port(struct controller_ctx *ctx,
     ovsrec_bridge_set_ports(src, ports, src->n_ports + 1);
 
     free(ports);
+    force_full_process();
 }
 
 static void
@@ -124,6 +125,7 @@ remove_port(struct controller_ctx *ctx,
             ovsrec_bridge_set_ports(bridge, new_ports, bridge->n_ports - 1);
             free(new_ports);
             ovsrec_port_delete(port);
+            force_full_process();
             return;
         }
     }
