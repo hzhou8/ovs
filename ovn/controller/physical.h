@@ -41,6 +41,11 @@ struct simap;
 #define OVN_GENEVE_LEN 4
 
 void physical_register_ovs_idl(struct ovsdb_idl *);
+bool detect_and_save_physical_changes(struct simap *localvif_to_ofport_p,
+                                      struct hmap *tunnels_p,
+                                      enum mf_field_id mff_ovn_geneve,
+                                      const struct ovsrec_bridge *br_int,
+                                      const struct sbrec_chassis *chassis);
 void physical_run(struct controller_ctx *, enum mf_field_id mff_ovn_geneve,
                   const struct ovsrec_bridge *br_int,
                   const struct sbrec_chassis *chassis,

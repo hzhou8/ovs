@@ -56,10 +56,6 @@ physical_register_ovs_idl(struct ovsdb_idl *ovs_idl)
     ovsdb_idl_add_column(ovs_idl, &ovsrec_interface_col_external_ids);
 }
 
-static struct simap localvif_to_ofport =
-    SIMAP_INITIALIZER(&localvif_to_ofport);
-static struct hmap tunnels = HMAP_INITIALIZER(&tunnels);
-
 /* Maps from a chassis to the OpenFlow port number of the tunnel that can be
  * used to reach that chassis. */
 struct chassis_tunnel {
@@ -70,11 +66,11 @@ struct chassis_tunnel {
 };
 
 static struct chassis_tunnel *
-chassis_tunnel_find(const char *chassis_id)
+chassis_tunnel_find(struct hmap *tunnels_p, const char *chassis_id)
 {
     struct chassis_tunnel *tun;
     HMAP_FOR_EACH_WITH_HASH (tun, hmap_node, hash_string(chassis_id, 0),
-                             &tunnels) {
+                             tunnels_p) {
         if (!strcmp(tun->chassis_id, chassis_id)) {
             return tun;
         }
@@ -293,7 +289,9 @@ consider_port_binding(enum mf_field_id mff_ovn_geneve,
                       const struct sbrec_port_binding *binding,
                       const struct sbrec_chassis *chassis,
                       struct ofpbuf *ofpacts_p,
-                      struct hmap *flow_table)
+                      struct hmap *flow_table,
+                      struct simap *localvif_to_ofport_p,
+                      struct hmap *tunnels_p)
 {
     uint32_t dp_key = binding->datapath->tunnel_key;
     uint32_t port_key = binding->tunnel_key;
@@ -444,14 +442,14 @@ consider_port_binding(enum mf_field_id mff_ovn_geneve,
         if (!binding->tag) {
             return;
         }
-        ofport = u16_to_ofp(simap_get(&localvif_to_ofport,
+        ofport = u16_to_ofp(simap_get(localvif_to_ofport_p,
                                       binding->parent_port));
         if (ofport) {
             tag = *binding->tag;
             nested_container = true;
         }
     } else {
-        ofport = u16_to_ofp(simap_get(&localvif_to_ofport,
+        ofport = u16_to_ofp(simap_get(localvif_to_ofport_p,
                                       binding->logical_port));
         if ((!strcmp(binding->type, "localnet")
             || !strcmp(binding->type, "l2gateway"))
@@ -470,13 +468,13 @@ consider_port_binding(enum mf_field_id mff_ovn_geneve,
             return;
         }
         if (localnet_port) {
-            ofport = u16_to_ofp(simap_get(&localvif_to_ofport,
+            ofport = u16_to_ofp(simap_get(localvif_to_ofport_p,
                                           localnet_port->logical_port));
             if (!ofport) {
                 return;
             }
         } else {
-            tun = chassis_tunnel_find(binding->chassis->name);
+            tun = chassis_tunnel_find(tunnels_p, binding->chassis->name);
             if (!tun) {
                 return;
             }
@@ -633,7 +631,9 @@ consider_mc_group(enum mf_field_id mff_ovn_geneve,
                   const struct sbrec_multicast_group *mc,
                   struct ofpbuf *ofpacts_p,
                   struct ofpbuf *remote_ofpacts_p,
-                  struct hmap *flow_table)
+                  struct hmap *flow_table,
+                  struct simap *localvif_to_ofport_p,
+                  struct hmap *tunnels_p)
 {
     uint32_t dp_key = mc->datapath->tunnel_key;
     if (!get_local_datapath(local_datapaths, dp_key)) {
@@ -681,7 +681,7 @@ consider_mc_group(enum mf_field_id mff_ovn_geneve,
             put_load(port->tunnel_key, MFF_LOG_OUTPORT, 0, 32,
                      remote_ofpacts_p);
             put_resubmit(OFTABLE_CHECK_LOOPBACK, remote_ofpacts_p);
-        } else if (simap_contains(&localvif_to_ofport,
+        } else if (simap_contains(localvif_to_ofport_p,
                            (port->parent_port && *port->parent_port)
                            ? port->parent_port : port->logical_port)
                    || (!strcmp(port->type, "l3gateway")
@@ -729,7 +729,7 @@ consider_mc_group(enum mf_field_id mff_ovn_geneve,
         const struct chassis_tunnel *prev = NULL;
         SSET_FOR_EACH (chassis, &remote_chassis) {
             const struct chassis_tunnel *tun
-                = chassis_tunnel_find(chassis);
+                = chassis_tunnel_find(tunnels_p, chassis);
             if (!tun) {
                 continue;
             }
@@ -753,12 +753,15 @@ consider_mc_group(enum mf_field_id mff_ovn_geneve,
     sset_destroy(&remote_chassis);
 }
 
-void
-physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
-             const struct ovsrec_bridge *br_int,
-             const struct sbrec_chassis *chassis,
-             const struct simap *ct_zones, struct lport_index *lports,
-             struct hmap *flow_table, struct hmap *local_datapaths)
+/* Scans the bridge 'br_int' and compares it to the supplied expected state.
+ * Returns true and updates the expected state if changes are detected.
+ * Returns false if no changes are found. */
+bool
+detect_and_save_physical_changes(struct simap *localvif_to_ofport_p,
+                                 struct hmap *tunnels_p,
+                                 enum mf_field_id mff_ovn_geneve,
+                                 const struct ovsrec_bridge *br_int,
+                                 const struct sbrec_chassis *chassis)
 {
 
     /* This bool tracks physical mapping changes. */
@@ -824,7 +827,8 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
                 }
 
                 simap_put(&new_tunnel_to_ofport, chassis_id, ofport);
-                struct chassis_tunnel *tun = chassis_tunnel_find(chassis_id);
+                struct chassis_tunnel *tun = chassis_tunnel_find(tunnels_p,
+                                                                 chassis_id);
                 if (tun) {
                     /* If the tunnel's ofport has changed, update. */
                     if (tun->ofport != u16_to_ofp(ofport) ||
@@ -835,7 +839,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
                     }
                 } else {
                     tun = xmalloc(sizeof *tun);
-                    hmap_insert(&tunnels, &tun->hmap_node,
+                    hmap_insert(tunnels_p, &tun->hmap_node,
                                 hash_string(chassis_id, 0));
                     tun->chassis_id = chassis_id;
                     tun->ofport = u16_to_ofp(ofport);
@@ -855,9 +859,9 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
 
     /* Remove tunnels that are no longer here. */
     struct chassis_tunnel *tun, *tun_next;
-    HMAP_FOR_EACH_SAFE (tun, tun_next, hmap_node, &tunnels) {
+    HMAP_FOR_EACH_SAFE (tun, tun_next, hmap_node, tunnels_p) {
         if (!simap_find(&new_tunnel_to_ofport, tun->chassis_id)) {
-            hmap_remove(&tunnels, &tun->hmap_node);
+            hmap_remove(tunnels_p, &tun->hmap_node);
             physical_map_changed = true;
             free(tun);
         }
@@ -865,29 +869,45 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
 
     /* Capture changed or removed openflow ports. */
     struct simap_node *vif_name, *vif_name_next;
-    SIMAP_FOR_EACH_SAFE (vif_name, vif_name_next, &localvif_to_ofport) {
+    SIMAP_FOR_EACH_SAFE (vif_name, vif_name_next, localvif_to_ofport_p) {
         int newport;
         if ((newport = simap_get(&new_localvif_to_ofport, vif_name->name))) {
-            if (newport != simap_get(&localvif_to_ofport, vif_name->name)) {
-                simap_put(&localvif_to_ofport, vif_name->name, newport);
+            if (newport != simap_get(localvif_to_ofport_p, vif_name->name)) {
+                simap_put(localvif_to_ofport_p, vif_name->name, newport);
                 physical_map_changed = true;
             }
         } else {
-            simap_find_and_delete(&localvif_to_ofport, vif_name->name);
+            simap_find_and_delete(localvif_to_ofport_p, vif_name->name);
             physical_map_changed = true;
         }
     }
     SIMAP_FOR_EACH (vif_name, &new_localvif_to_ofport) {
-        if (!simap_get(&localvif_to_ofport, vif_name->name)) {
-            simap_put(&localvif_to_ofport, vif_name->name,
+        if (!simap_get(localvif_to_ofport_p, vif_name->name)) {
+            simap_put(localvif_to_ofport_p, vif_name->name,
                       simap_get(&new_localvif_to_ofport, vif_name->name));
             physical_map_changed = true;
         }
     }
-    if (physical_map_changed) {
-        /* Reprocess logical flow table immediately. */
-        poll_immediate_wake();
-    }
+
+
+    simap_destroy(&new_localvif_to_ofport);
+    simap_destroy(&new_tunnel_to_ofport);
+
+    return physical_map_changed;
+}
+
+void
+physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
+             const struct ovsrec_bridge *br_int,
+             const struct sbrec_chassis *chassis,
+             const struct simap *ct_zones, struct lport_index *lports,
+             struct hmap *flow_table, struct hmap *local_datapaths)
+{
+    struct simap localvif_to_ofport = SIMAP_INITIALIZER(&localvif_to_ofport);
+    struct hmap tunnels = HMAP_INITIALIZER(&tunnels);
+
+    detect_and_save_physical_changes(&localvif_to_ofport, &tunnels,
+                                     mff_ovn_geneve, br_int, chassis);
 
     struct ofpbuf ofpacts;
     ofpbuf_init(&ofpacts, 0);
@@ -898,7 +918,8 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
     SBREC_PORT_BINDING_FOR_EACH (binding, ctx->ovnsb_idl) {
         consider_port_binding(mff_ovn_geneve, ct_zones, lports,
                               local_datapaths, binding, chassis,
-                              &ofpacts, flow_table);
+                              &ofpacts, flow_table,
+                              &localvif_to_ofport, &tunnels);
     }
 
     /* Handle output to multicast groups, in tables 32 and 33. */
@@ -907,7 +928,8 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
     ofpbuf_init(&remote_ofpacts, 0);
     SBREC_MULTICAST_GROUP_FOR_EACH (mc, ctx->ovnsb_idl) {
         consider_mc_group(mff_ovn_geneve, ct_zones, local_datapaths, chassis,
-                          mc, &ofpacts, &remote_ofpacts, flow_table);
+                          mc, &ofpacts, &remote_ofpacts, flow_table,
+                          &localvif_to_ofport, &tunnels);
     }
 
     ofpbuf_uninit(&remote_ofpacts);
@@ -923,6 +945,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
      * ports.  We set MFF_LOG_DATAPATH, MFF_LOG_INPORT, and
      * MFF_LOG_OUTPORT from the tunnel key data, then resubmit to table
      * 33 to handle packets to the local hypervisor. */
+    struct chassis_tunnel *tun;
     HMAP_FOR_EACH (tun, hmap_node, &tunnels) {
         struct match match = MATCH_CATCHALL_INITIALIZER;
         match_set_in_port(&match, tun->ofport);
@@ -1041,6 +1064,9 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
 
     ofpbuf_uninit(&ofpacts);
 
-    simap_destroy(&new_localvif_to_ofport);
-    simap_destroy(&new_tunnel_to_ofport);
+    simap_destroy(&localvif_to_ofport);
+    HMAP_FOR_EACH_POP (tun, hmap_node, &tunnels) {
+        free(tun);
+    }
+    hmap_destroy(&tunnels);
 }
