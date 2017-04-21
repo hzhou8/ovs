@@ -86,6 +86,7 @@ create_patch_port(struct controller_ctx *ctx,
     ovsrec_port_set_name(port, src_name);
     ovsrec_port_set_interfaces(port, &iface, 1);
     const struct smap ids = SMAP_CONST1(&ids, key, value);
+    VLOG_WARN("create_patch_port set external_ids %s %s", key, value);
     ovsrec_port_set_external_ids(port, &ids);
 
     struct ovsrec_port **ports;
@@ -96,6 +97,7 @@ create_patch_port(struct controller_ctx *ctx,
     ovsrec_bridge_set_ports(src, ports, src->n_ports + 1);
 
     free(ports);
+    VLOG_WARN("create_patch_port force_full_proc");
     force_full_process();
 }
 

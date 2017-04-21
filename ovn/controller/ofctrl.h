@@ -36,6 +36,7 @@ enum mf_field_id ofctrl_run(const struct ovsrec_bridge *br_int,
                             struct shash *pending_ct_zones);
 void ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
                 int64_t nb_cfg);
+bool ofctrl_can_put(void);
 void ofctrl_wait(void);
 void ofctrl_destroy(void);
 int64_t ofctrl_get_cur_cfg(void);

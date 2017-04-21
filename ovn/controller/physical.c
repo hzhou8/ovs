@@ -181,7 +181,7 @@ get_zone_ids(const struct sbrec_port_binding *binding,
 static void
 put_local_common_flows(uint32_t dp_key, uint32_t port_key,
                        bool nested_container, const struct zone_ids *zone_ids,
-                       struct ofpbuf *ofpacts_p, struct hmap *flow_table)
+                       struct ofpbuf *ofpacts_p, struct hmap *flow_table, bool is_localnet)
 {
     struct match match;
 
@@ -222,6 +222,9 @@ put_local_common_flows(uint32_t dp_key, uint32_t port_key,
      *
      * Drop packets whose logical inport and outport are the same
      * and the MLF_ALLOW_LOOPBACK flag is not set. */
+    if (is_localnet) {
+        VLOG_WARN("localnet table 34 added");
+    }
     match_init_catchall(&match);
     ofpbuf_clear(ofpacts_p);
     match_set_metadata(&match, htonll(dp_key));
@@ -320,7 +323,7 @@ consider_port_binding(enum mf_field_id mff_ovn_geneve,
 
         struct zone_ids binding_zones = get_zone_ids(binding, ct_zones);
         put_local_common_flows(dp_key, port_key, false, &binding_zones,
-                               ofpacts_p, flow_table);
+                               ofpacts_p, flow_table, false);
 
         match_init_catchall(&match);
         ofpbuf_clear(ofpacts_p);
@@ -456,6 +459,9 @@ consider_port_binding(enum mf_field_id mff_ovn_geneve,
             && ofport && binding->tag) {
             tag = *binding->tag;
         }
+        if (!strcmp(binding->type, "localnet")) {
+            VLOG_WARN("localnet ofport %u", ofport);
+        }
     }
 
     const struct chassis_tunnel *tun = NULL;
@@ -490,7 +496,7 @@ consider_port_binding(enum mf_field_id mff_ovn_geneve,
 
         struct zone_ids zone_ids = get_zone_ids(binding, ct_zones);
         put_local_common_flows(dp_key, port_key, nested_container, &zone_ids,
-                               ofpacts_p, flow_table);
+                               ofpacts_p, flow_table,!strcmp(binding->type, "localnet"));
 
         /* Table 0, Priority 150 and 100.
          * ==============================
@@ -766,7 +772,7 @@ detect_and_save_physical_changes(struct simap *localvif_to_ofport_p,
 
     /* This bool tracks physical mapping changes. */
     bool physical_map_changed = false;
-
+    VLOG_WARN("detect physical: %p", localvif_to_ofport_p);
     struct simap new_localvif_to_ofport =
         SIMAP_INITIALIZER(&new_localvif_to_ofport);
     struct simap new_tunnel_to_ofport =
@@ -788,6 +794,9 @@ detect_and_save_physical_changes(struct simap *localvif_to_ofport_p,
         const char *l2gateway = smap_get(&port_rec->external_ids,
                                         "ovn-l2gateway-port");
 
+        if (!strcmp(port_rec->name, "patch-br-int-to-provnet")) {
+            VLOG_WARN("patch-br-int-to-provnet, localnet %s, n_intf %"PRIu64, localnet, port_rec->n_interfaces);
+        }
         for (int j = 0; j < port_rec->n_interfaces; j++) {
             const struct ovsrec_interface *iface_rec = port_rec->interfaces[j];
 
@@ -799,13 +808,16 @@ detect_and_save_physical_changes(struct simap *localvif_to_ofport_p,
             if (ofport < 1 || ofport > ofp_to_u16(OFPP_MAX)) {
                 continue;
             }
-
+            if (!strcmp(port_rec->name, "patch-br-int-to-provnet")) {
+                VLOG_WARN("patch-br-int-to-provnet ofport %u, type %s", u16_to_ofp(ofport), iface_rec->type);
+            }
             /* Record as patch to local net, logical patch port, chassis, or
              * local logical port. */
             bool is_patch = !strcmp(iface_rec->type, "patch");
             if (is_patch && localnet) {
                 /* localnet patch ports can be handled just like VIFs. */
                 simap_put(&new_localvif_to_ofport, localnet, ofport);
+                VLOG_WARN("put localnet ofport %u", u16_to_ofp(ofport));
                 break;
             } else if (is_patch && l2gateway) {
                 /* L2 gateway patch ports can be handled just like VIFs. */
@@ -892,6 +904,7 @@ detect_and_save_physical_changes(struct simap *localvif_to_ofport_p,
 
     simap_destroy(&new_localvif_to_ofport);
     simap_destroy(&new_tunnel_to_ofport);
+    VLOG_WARN("physical_map_changed %d", physical_map_changed);
 
     return physical_map_changed;
 }

@@ -636,6 +636,11 @@ ofctrl_add_flow(struct hmap *desired_flows,
         return;
     }
 
+    if (f->table_id == 34) {
+        char *s = ovn_flow_to_string(f);
+        VLOG_WARN("ofctrl_add_flow to table 34");
+        free(s);
+    }
     hmap_insert(desired_flows, &f->hmap_node, f->hmap_node.hash);
 }
 
@@ -815,6 +820,16 @@ add_ct_flush_zone(uint16_t zone_id, struct ovs_list *msgs)
     ovs_list_push_back(msgs, &msg->list_node);
 }
 
+bool
+ofctrl_can_put(void)
+{
+    if (state != S_UPDATE_FLOWS
+        || rconn_packet_counter_n_packets(tx_counter)) {
+        return false;
+    }
+    return true;
+}
+
 /* Replaces the flow table on the switch, if possible, by the flows added
  * with ofctrl_add_flow().
  *
@@ -837,10 +852,12 @@ ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
      * in the correct state and not backlogged with existing flow_mods.  (Our
      * criteria for being backlogged appear very conservative, but the socket
      * between ovn-controller and OVS provides some buffering.) */
-    if (state != S_UPDATE_FLOWS
-        || rconn_packet_counter_n_packets(tx_counter)) {
+    VLOG_WARN("ofctrl_put state %d", state);
+    if (!ofctrl_can_put()) {
+        VLOG_WARN("ofctrl_put state not S_UPDATE_FLOWS");
         ovn_flow_table_clear(flow_table);
         ovn_group_table_clear(groups, false);
+        force_full_process();
         return;
     }
 
@@ -951,6 +968,9 @@ ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
             .command = OFPFC_ADD,
         };
         add_flow_mod(&fm, &msgs);
+        if (d->table_id == 34) {
+            VLOG_WARN("ofctrl_put flow to table 34");
+        }
         ovn_flow_log(d, "adding installed");
 
         /* Move 'd' from 'flow_table' to installed_flows. */

@@ -575,6 +575,7 @@ main(int argc, char *argv[])
 
     /* Main loop. */
     exiting = false;
+    bool pending_physical_change = true;
     while (!exiting) {
         /* Check OVN SB database. */
         char *new_ovnsb_remote = get_ovnsb_remote(ovs_idl_loop.idl);
@@ -638,9 +639,16 @@ main(int argc, char *argv[])
             pinctrl_run(&ctx, &lports, br_int, chassis, &local_datapaths);
             update_ct_zones(&local_lports, &local_datapaths, &ct_zones,
                             ct_zone_bitmap, &pending_ct_zones);
+	    VLOG_WARN("ctx.ovs_idl_txn %p", ctx.ovs_idl_txn);
             if (ctx.ovs_idl_txn) {
-                if (physical_change || seqno < cur_seqno) {
+	        VLOG_WARN("cur_seqno %u, seqno %u, phys %d", cur_seqno, seqno, physical_change);
+                if (physical_change) {
+                    pending_physical_change = true;
+                }
+                if ((pending_physical_change || seqno < cur_seqno) &&
+                    ofctrl_can_put()) {
                     seqno = cur_seqno;
+                    pending_physical_change = false;
 
                     commit_ct_zones(br_int, &pending_ct_zones);
 
