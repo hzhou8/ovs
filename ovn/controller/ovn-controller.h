@@ -87,5 +87,6 @@ enum chassis_tunnel_type {
 
 uint32_t get_tunnel_type(const char *name);
 
+void force_full_process(void);
 
 #endif /* ovn/ovn-controller.h */

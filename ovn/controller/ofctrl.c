@@ -383,6 +383,8 @@ run_S_CLEAR_FLOWS(void)
     queue_msg(encode_group_mod(&gm));
     ofputil_uninit_group_mod(&gm);
 
+    force_full_process();
+
     /* Clear existing groups, to match the state of the switch. */
     if (groups) {
         ovn_group_table_clear(groups, true);
@@ -848,6 +850,7 @@ ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
     if (!ofctrl_can_put()) {
         ovn_flow_table_clear(flow_table);
         ovn_group_table_clear(groups, false);
+        force_full_process();
         return;
     }
 
