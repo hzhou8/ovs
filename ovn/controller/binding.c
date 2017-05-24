@@ -40,6 +40,11 @@ struct qos_queue {
     uint32_t burst;
 };
 
+struct localnet_port {
+    struct hmap_node node;
+    const struct sbrec_port_binding *pb;
+};
+
 void
 binding_register_ovs_idl(struct ovsdb_idl *ovs_idl)
 {
@@ -361,7 +366,8 @@ consider_local_datapath(struct controller_ctx *ctx,
                         struct hmap *qos_map,
                         struct hmap *local_datapaths,
                         struct shash *lport_to_iface,
-                        struct sset *local_lports)
+                        struct sset *local_lports,
+                        struct hmap *localnet_ports)
 {
     const struct ovsrec_interface *iface_rec
         = shash_find_data(lport_to_iface, binding_rec->logical_port);
@@ -409,6 +415,15 @@ consider_local_datapath(struct controller_ctx *ctx,
         /* Add all localnet ports to local_lports so that we allocate ct zones
          * for them. */
         sset_add(local_lports, binding_rec->logical_port);
+
+        /* Add to localnet_ports so that we can update localnet_port field
+         * for each dp in local_datapaths later */
+        struct localnet_port *ln_port;
+        ln_port = xzalloc(sizeof *ln_port);
+        hmap_insert(localnet_ports, &ln_port->node,
+                    hash_string(binding_rec->logical_port, 0));
+        ln_port->pb = binding_rec;
+
         our_chassis = false;
     }
 
@@ -453,8 +468,10 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     struct shash lport_to_iface = SHASH_INITIALIZER(&lport_to_iface);
     struct sset egress_ifaces = SSET_INITIALIZER(&egress_ifaces);
     struct hmap qos_map;
+    struct hmap localnet_ports;
 
     hmap_init(&qos_map);
+    hmap_init(&localnet_ports);
     if (br_int) {
         get_local_iface_ids(br_int, &lport_to_iface, local_lports,
                             &egress_ifaces);
@@ -468,8 +485,33 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
                                 chassis_rec, binding_rec,
                                 sset_is_empty(&egress_ifaces) ? NULL :
                                 &qos_map, local_datapaths, &lport_to_iface,
-                                local_lports);
+                                local_lports, &localnet_ports);
 
+    }
+
+    /* Run through each localnet port binding to see if it is on local
+     * datapaths discovered from above loop, and update the item
+     * accordingly. */
+    struct localnet_port *ln_port;
+    HMAP_FOR_EACH (ln_port, node, &localnet_ports) {
+        struct local_datapath *ld
+            = get_local_datapath(local_datapaths,
+                                 ln_port->pb->datapath->tunnel_key);
+        if (!ld) {
+            continue;
+        }
+
+        if (ld->localnet_port && strcmp(ld->localnet_port->logical_port,
+                                        ln_port->pb->logical_port)) {
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+            VLOG_WARN_RL(&rl, "localnet port '%s' already set for datapath "
+                         "'%"PRId64"', skipping the new port '%s'.",
+                         ld->localnet_port->logical_port,
+                         ln_port->pb->datapath->tunnel_key,
+                         ln_port->pb->logical_port);
+            continue;
+        }
+        ld->localnet_port = ln_port->pb;
     }
 
     if (!sset_is_empty(&egress_ifaces)
@@ -483,6 +525,7 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     shash_destroy(&lport_to_iface);
     sset_destroy(&egress_ifaces);
     hmap_destroy(&qos_map);
+    hmap_destroy(&localnet_ports);
 }
 
 /* Returns true if the database is all cleaned up, false if more work is
