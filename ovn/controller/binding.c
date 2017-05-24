@@ -367,7 +367,8 @@ consider_local_datapath(struct controller_ctx *ctx,
                         struct hmap *local_datapaths,
                         struct shash *lport_to_iface,
                         struct sset *local_lports,
-                        struct hmap *localnet_ports)
+                        struct hmap *localnet_ports,
+                        bool update_sb)
 {
     const struct ovsrec_interface *iface_rec
         = shash_find_data(lport_to_iface, binding_rec->logical_port);
@@ -427,7 +428,7 @@ consider_local_datapath(struct controller_ctx *ctx,
         our_chassis = false;
     }
 
-    if (ctx->ovnsb_idl_txn) {
+    if (ctx->ovnsb_idl_txn && update_sb) {
         if (our_chassis) {
             if (binding_rec->chassis != chassis_rec) {
                 if (binding_rec->chassis) {
@@ -458,7 +459,8 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
             const struct sbrec_chassis *chassis_rec,
             const struct ldatapath_index *ldatapaths,
             const struct lport_index *lports, struct hmap *local_datapaths,
-            struct sset *local_lports)
+            struct sset *local_lports,
+            bool update_sb)
 {
     if (!chassis_rec) {
         return;
@@ -485,7 +487,8 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
                                 chassis_rec, binding_rec,
                                 sset_is_empty(&egress_ifaces) ? NULL :
                                 &qos_map, local_datapaths, &lport_to_iface,
-                                local_lports, &localnet_ports);
+                                local_lports, &localnet_ports,
+                                update_sb);
 
     }
 
