@@ -33,6 +33,11 @@ void binding_run(struct controller_ctx *, const struct ovsrec_bridge *br_int,
                  const struct chassis_index *,
                  struct sset *active_tunnels, struct hmap *local_datapaths,
                  struct sset *all_lports);
+void binding_get(struct controller_ctx *, const struct ovsrec_bridge *br_int,
+                 const struct sbrec_chassis *,
+                 const struct chassis_index *,
+                 struct sset *active_tunnels, struct hmap *local_datapaths,
+                 struct sset *all_lports);
 bool binding_cleanup(struct controller_ctx *, const struct sbrec_chassis *);
 
 #endif /* ovn/binding.h */

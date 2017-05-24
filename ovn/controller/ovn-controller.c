@@ -204,14 +204,25 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
     ovsdb_idl_condition_destroy(&dns);
 }
 
+static const char *
+br_int_name(const struct ovsrec_open_vswitch *cfg)
+{
+    return smap_get_def(&cfg->external_ids, "ovn-bridge", DEFAULT_BRIDGE_NAME);
+}
+
 static const struct ovsrec_bridge *
-create_br_int(struct controller_ctx *ctx,
-              const struct ovsrec_open_vswitch *cfg,
-              const char *bridge_name)
+create_br_int(struct controller_ctx *ctx)
 {
     if (!ctx->ovs_idl_txn) {
         return NULL;
     }
+
+    const struct ovsrec_open_vswitch *cfg;
+    cfg = ovsrec_open_vswitch_first(ctx->ovs_idl);
+    if (!cfg) {
+        return NULL;
+    }
+    const char *bridge_name = br_int_name(cfg);
 
     ovsdb_idl_txn_add_comment(ctx->ovs_idl_txn,
             "ovn-controller: creating integration bridge '%s'", bridge_name);
@@ -255,15 +266,7 @@ get_br_int(struct controller_ctx *ctx)
         return NULL;
     }
 
-    const char *br_int_name = smap_get_def(&cfg->external_ids, "ovn-bridge",
-                                           DEFAULT_BRIDGE_NAME);
-
-    const struct ovsrec_bridge *br;
-    br = get_bridge(ctx->ovs_idl, br_int_name);
-    if (!br) {
-        return create_br_int(ctx, cfg, br_int_name);
-    }
-    return br;
+    return get_bridge(ctx->ovs_idl, br_int_name(cfg));
 }
 
 static const char *
@@ -673,6 +676,9 @@ main(int argc, char *argv[])
         struct sset active_tunnels = SSET_INITIALIZER(&active_tunnels);
 
         const struct ovsrec_bridge *br_int = get_br_int(&ctx);
+        if (!br_int) {
+            br_int = create_br_int(&ctx);
+        }
         const char *chassis_id = get_chassis_id(ctx.ovs_idl);
 
         struct chassis_index chassis_index;
