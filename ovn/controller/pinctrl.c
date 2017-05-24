@@ -45,6 +45,8 @@
 #include "socket-util.h"
 #include "timeval.h"
 #include "vswitch-idl.h"
+#include "latch.h"
+#include "binding.h"
 
 VLOG_DEFINE_THIS_MODULE(pinctrl);
 
@@ -79,6 +81,100 @@ static void reload_metadata(struct ofpbuf *ofpacts,
                             const struct match *md);
 
 COVERAGE_DEFINE(pinctrl_drop_put_mac_binding);
+
+void *
+pinctrl_thread_main(void *arg)
+{
+    struct ctrl_thread *thread = arg;
+    pinctrl_init();
+
+    struct ovsdb_idl_loop ovs_idl_loop = OVSDB_IDL_LOOP_INITIALIZER(
+        ovsdb_idl_create(ovs_remote, &ovsrec_idl_class, false, true));
+    ctrl_register_ovs_idl(ovs_idl_loop.idl);
+    ovsdb_idl_get_initial_snapshot(ovs_idl_loop.idl);
+
+    char *ovnsb_remote = get_ovnsb_remote(ovs_idl_loop.idl);
+    struct ovsdb_idl_loop ovnsb_idl_loop = OVSDB_IDL_LOOP_INITIALIZER(
+        ovsdb_idl_create(ovnsb_remote, &sbrec_idl_class, true, true));
+    ovsdb_idl_omit_alert(ovnsb_idl_loop.idl, &sbrec_chassis_col_nb_cfg);
+    update_sb_monitors(ovnsb_idl_loop.idl, NULL, NULL, NULL);
+    ovsdb_idl_get_initial_snapshot(ovnsb_idl_loop.idl);
+
+    while (!latch_is_set(&thread->exit_latch)) {
+        /* Below logic is similar as in main loop in ovn-controller.c,
+         * while the purpose here is packet-in processing only */
+        char *new_ovnsb_remote = get_ovnsb_remote(ovs_idl_loop.idl);
+        if (strcmp(ovnsb_remote, new_ovnsb_remote)) {
+            free(ovnsb_remote);
+            ovnsb_remote = new_ovnsb_remote;
+            ovsdb_idl_set_remote(ovnsb_idl_loop.idl, ovnsb_remote, true);
+        } else {
+            free(new_ovnsb_remote);
+        }
+
+        struct controller_ctx ctx = {
+            .ovs_idl = ovs_idl_loop.idl,
+            .ovs_idl_txn = ovsdb_idl_loop_run(&ovs_idl_loop),
+            .ovnsb_idl = ovnsb_idl_loop.idl,
+            .ovnsb_idl_txn = ovsdb_idl_loop_run(&ovnsb_idl_loop),
+        };
+
+        update_probe_interval(&ctx);
+
+        struct hmap local_datapaths = HMAP_INITIALIZER(&local_datapaths);
+        struct sset local_lports = SSET_INITIALIZER(&local_lports);
+        const struct ovsrec_bridge *br_int = get_br_int(&ctx, false);
+        const char *chassis_id = get_chassis_id(ctx.ovs_idl);
+        struct ldatapath_index ldatapaths;
+        struct lport_index lports;
+        ldatapath_index_init(&ldatapaths, ctx.ovnsb_idl);
+        lport_index_init(&lports, ctx.ovnsb_idl);
+
+        const struct sbrec_chassis *chassis = NULL;
+        if (chassis_id) {
+            chassis = get_chassis(ctx.ovnsb_idl, chassis_id);
+            binding_run(&ctx, br_int, chassis, &ldatapaths, &lports,
+                        &local_datapaths, &local_lports, false);
+        }
+
+        if (br_int && chassis) {
+            pinctrl_run(&ctx, &lports, br_int, chassis, &local_datapaths);
+            update_sb_monitors(ctx.ovnsb_idl, chassis,
+                               &local_lports, &local_datapaths);
+        }
+
+        lport_index_destroy(&lports);
+        ldatapath_index_destroy(&ldatapaths);
+
+        sset_destroy(&local_lports);
+
+        struct local_datapath *cur_node, *next_node;
+        HMAP_FOR_EACH_SAFE (cur_node, next_node, hmap_node, &local_datapaths) {
+            hmap_remove(&local_datapaths, &cur_node->hmap_node);
+            free(cur_node);
+        }
+        hmap_destroy(&local_datapaths);
+
+        if (br_int) {
+            pinctrl_wait(&ctx);
+        }
+        ovsdb_idl_loop_commit_and_wait(&ovnsb_idl_loop);
+        ovsdb_idl_loop_commit_and_wait(&ovs_idl_loop);
+
+        latch_wait(&thread->exit_latch);
+        poll_block();
+    }
+
+    pinctrl_destroy();
+
+    ovsdb_idl_loop_destroy(&ovs_idl_loop);
+    ovsdb_idl_loop_destroy(&ovnsb_idl_loop);
+
+    free(ovnsb_remote);
+
+    VLOG_INFO("pinctrl thread done");
+    return NULL;
+}
 
 void
 pinctrl_init(void)

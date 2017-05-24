@@ -18,7 +18,9 @@
 #define OVN_CONTROLLER_H 1
 
 #include "simap.h"
+#include "sset.h"
 #include "ovn/lib/ovn-sb-idl.h"
+#include "latch.h"
 
 /* Linux supports a maximum of 64K zones, which seems like a fine default. */
 #define MAX_CT_ZONES 65535
@@ -68,6 +70,13 @@ struct local_datapath {
     bool has_local_l3gateway;
 };
 
+struct ctrl_thread {
+    pthread_t thread;
+
+    /* Controls thread exit. */
+    struct latch exit_latch;
+};
+
 struct local_datapath *get_local_datapath(const struct hmap *,
                                           uint32_t tunnel_key);
 
@@ -87,5 +96,29 @@ enum chassis_tunnel_type {
 
 uint32_t get_tunnel_type(const char *name);
 
+/* Retrieves the OVN Southbound remote location from the
+ * "external-ids:ovn-remote" key in 'ovs_idl' and returns a copy of it. */
+char *get_ovnsb_remote(struct ovsdb_idl *ovs_idl);
 
+void
+update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
+                   const struct sbrec_chassis *chassis,
+                   const struct sset *local_ifaces,
+                   struct hmap *local_datapaths);
+
+/* Get the desired SB probe timer from the OVS database and configure it into
+ * the SB database. */
+void
+update_probe_interval(struct controller_ctx *ctx);
+
+const struct ovsrec_bridge *
+get_br_int(struct controller_ctx *ctx, bool need_create);
+
+const char *
+get_chassis_id(const struct ovsdb_idl *ovs_idl);
+
+void
+ctrl_register_ovs_idl(struct ovsdb_idl *ovs_idl);
+
+extern char *ovs_remote;
 #endif /* ovn/ovn-controller.h */

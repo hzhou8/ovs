@@ -54,6 +54,8 @@
 #include "stream.h"
 #include "unixctl.h"
 #include "util.h"
+#include "latch.h"
+#include "ovs-thread.h"
 
 VLOG_DEFINE_THIS_MODULE(main);
 
@@ -64,7 +66,6 @@ static unixctl_cb_func inject_pkt;
 #define DEFAULT_BRIDGE_NAME "br-int"
 #define DEFAULT_PROBE_INTERVAL_MSEC 5000
 
-static void update_probe_interval(struct controller_ctx *);
 static void parse_options(int argc, char *argv[]);
 OVS_NO_RETURN static void usage(void);
 
@@ -75,7 +76,7 @@ struct pending_pkt {
     char *flow_s;
 };
 
-static char *ovs_remote;
+char *ovs_remote;
 
 struct local_datapath *
 get_local_datapath(const struct hmap *local_datapaths, uint32_t tunnel_key)
@@ -126,7 +127,7 @@ get_bridge(struct ovsdb_idl *ovs_idl, const char *br_name)
     return NULL;
 }
 
-static void
+void
 update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
                    const struct sbrec_chassis *chassis,
                    const struct sset *local_ifaces,
@@ -236,7 +237,7 @@ create_br_int(struct controller_ctx *ctx,
     return bridge;
 }
 
-static const struct ovsrec_bridge *
+const struct ovsrec_bridge *
 get_br_int(struct controller_ctx *ctx, bool need_create)
 {
     const struct ovsrec_open_vswitch *cfg;
@@ -256,7 +257,7 @@ get_br_int(struct controller_ctx *ctx, bool need_create)
     return br;
 }
 
-static const char *
+const char *
 get_chassis_id(const struct ovsdb_idl *ovs_idl)
 {
     const struct ovsrec_open_vswitch *cfg = ovsrec_open_vswitch_first(ovs_idl);
@@ -285,7 +286,7 @@ addr_sets_init(struct controller_ctx *ctx, struct shash *addr_sets)
 
 /* Retrieves the OVN Southbound remote location from the
  * "external-ids:ovn-remote" key in 'ovs_idl' and returns a copy of it. */
-static char *
+char *
 get_ovnsb_remote(struct ovsdb_idl *ovs_idl)
 {
     while (1) {
@@ -473,6 +474,22 @@ get_nb_cfg(struct ovsdb_idl *idl)
 }
 
 static void
+ctrl_thread_create(struct ctrl_thread *thread, const char *name,
+    void *(*start)(void *))
+{
+    latch_init(&thread->exit_latch);
+    thread->thread = ovs_thread_create(name, start, thread);
+}
+
+static void
+ctrl_thread_exit(struct ctrl_thread *thread)
+{
+    latch_set(&thread->exit_latch);
+    xpthread_join(thread->thread, NULL);
+    latch_destroy(&thread->exit_latch);
+}
+
+void
 ctrl_register_ovs_idl(struct ovsdb_idl *ovs_idl)
 {
     /* We do not monitor all tables by default, so modules must register
@@ -531,7 +548,6 @@ main(int argc, char *argv[])
     daemonize_complete();
 
     ofctrl_init(&group_table);
-    pinctrl_init();
     lflow_init();
 
     /* Connect to OVS OVSDB instance. */
@@ -561,6 +577,10 @@ main(int argc, char *argv[])
     struct pending_pkt pending_pkt = { .conn = NULL };
     unixctl_command_register("inject-pkt", "MICROFLOW", 1, 1, inject_pkt,
                              &pending_pkt);
+
+
+    struct ctrl_thread pinctrl_thread;
+    ctrl_thread_create(&pinctrl_thread, "pinctrl", pinctrl_thread_main);
 
     /* Main loop. */
     exiting = false;
@@ -621,7 +641,6 @@ main(int argc, char *argv[])
             enum mf_field_id mff_ovn_geneve = ofctrl_run(br_int,
                                                          &pending_ct_zones);
 
-            pinctrl_run(&ctx, &lports, br_int, chassis, &local_datapaths);
             update_ct_zones(&local_lports, &local_datapaths, &ct_zones,
                             ct_zone_bitmap, &pending_ct_zones);
             if (ctx.ovs_idl_txn) {
@@ -701,7 +720,6 @@ main(int argc, char *argv[])
 
         if (br_int) {
             ofctrl_wait();
-            pinctrl_wait(&ctx);
         }
         ovsdb_idl_loop_commit_and_wait(&ovnsb_idl_loop);
 
@@ -750,10 +768,12 @@ main(int argc, char *argv[])
         poll_block();
     }
 
+    /* stop child controller threads */
+    ctrl_thread_exit(&pinctrl_thread);
+
     unixctl_server_destroy(unixctl);
     lflow_destroy();
     ofctrl_destroy();
-    pinctrl_destroy();
 
     simap_destroy(&ct_zones);
 
@@ -910,7 +930,7 @@ inject_pkt(struct unixctl_conn *conn, int argc OVS_UNUSED,
 
 /* Get the desired SB probe timer from the OVS database and configure it into
  * the SB database. */
-static void
+void
 update_probe_interval(struct controller_ctx *ctx)
 {
     const struct ovsrec_open_vswitch *cfg
