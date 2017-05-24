@@ -237,7 +237,7 @@ create_br_int(struct controller_ctx *ctx,
 }
 
 static const struct ovsrec_bridge *
-get_br_int(struct controller_ctx *ctx)
+get_br_int(struct controller_ctx *ctx, bool need_create)
 {
     const struct ovsrec_open_vswitch *cfg;
     cfg = ovsrec_open_vswitch_first(ctx->ovs_idl);
@@ -250,7 +250,7 @@ get_br_int(struct controller_ctx *ctx)
 
     const struct ovsrec_bridge *br;
     br = get_bridge(ctx->ovs_idl, br_int_name);
-    if (!br) {
+    if (!br && need_create) {
         return create_br_int(ctx, cfg, br_int_name);
     }
     return br;
@@ -594,7 +594,7 @@ main(int argc, char *argv[])
          * local hypervisor, and localnet ports. */
         struct sset local_lports = SSET_INITIALIZER(&local_lports);
 
-        const struct ovsrec_bridge *br_int = get_br_int(&ctx);
+        const struct ovsrec_bridge *br_int = get_br_int(&ctx, true);
         const char *chassis_id = get_chassis_id(ctx.ovs_idl);
 
         struct ldatapath_index ldatapaths;
@@ -609,7 +609,7 @@ main(int argc, char *argv[])
             chassis = chassis_run(&ctx, chassis_id, br_int);
             encaps_run(&ctx, br_int, chassis_id);
             binding_run(&ctx, br_int, chassis, &ldatapaths, &lports,
-                        &local_datapaths, &local_lports);
+                        &local_datapaths, &local_lports, true);
         }
 
         if (br_int && chassis) {
@@ -731,7 +731,7 @@ main(int argc, char *argv[])
             .ovnsb_idl_txn = ovsdb_idl_loop_run(&ovnsb_idl_loop),
         };
 
-        const struct ovsrec_bridge *br_int = get_br_int(&ctx);
+        const struct ovsrec_bridge *br_int = get_br_int(&ctx, false);
         const char *chassis_id = get_chassis_id(ctx.ovs_idl);
         const struct sbrec_chassis *chassis
             = chassis_id ? get_chassis(ctx.ovnsb_idl, chassis_id) : NULL;
