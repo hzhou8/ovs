@@ -421,10 +421,19 @@ run_S_UPDATE_FLOWS(void)
      * Being in this state enables ofctrl_put() to work, however. */
 }
 
+static void log_openflow(enum vlog_level level,
+                const struct ofp_header *oh, const char *title)
+{
+    char *s = ofp_to_string(oh, ntohs(oh->length), 2);
+    vlog(&this_module, level, "%s: %s", title, s);
+    free(s);
+}
+
 static void
 recv_S_UPDATE_FLOWS(const struct ofp_header *oh, enum ofptype type,
                     struct shash *pending_ct_zones)
 {
+    log_openflow(VLL_WARN, oh, "OpenFlow packet received by S_UPDATE_FLOWS");
     if (type == OFPTYPE_BARRIER_REPLY && !ovs_list_is_empty(&flow_updates)) {
         struct ofctrl_flow_update *fup = ofctrl_flow_update_from_list_node(
             ovs_list_front(&flow_updates));
@@ -435,7 +444,6 @@ recv_S_UPDATE_FLOWS(const struct ofp_header *oh, enum ofptype type,
             ovs_list_remove(&fup->list_node);
             free(fup);
         }
-
         /* If the barrier xid is associated with an outstanding conntrack
          * flush, the flush succeeded.  Move the pending ct zone entry
          * to the next stage. */
@@ -460,7 +468,7 @@ ofctrl_run(const struct ovsrec_bridge *br_int, struct shash *pending_ct_zones)
 {
     char *target = xasprintf("unix:%s/%s.mgmt", ovs_rundir(), br_int->name);
     if (strcmp(target, rconn_get_target(swconn))) {
-        VLOG_INFO("%s: connecting to switch", target);
+        VLOG_INFO("%s: connecting to ovs switch", target);
         rconn_connect(swconn, target, target);
     }
     free(target);
@@ -486,6 +494,7 @@ ofctrl_run(const struct ovsrec_bridge *br_int, struct shash *pending_ct_zones)
 
     bool progress = true;
     for (int i = 0; progress && i < 50; i++) {
+        VLOG_INFO("ofctrl loop: %d, state %d", i, state);
         /* Allow the state machine to run. */
         enum ofctrl_state old_state = state;
         switch (state) {
@@ -503,6 +512,9 @@ ofctrl_run(const struct ovsrec_bridge *br_int, struct shash *pending_ct_zones)
             enum ofptype type;
             enum ofperr error;
 
+            char *s = ofp_to_string(oh, ntohs(oh->length), 1);
+            VLOG_WARN("received OpenFlow message %s", s);
+            free(s);
             error = ofptype_decode(&type, oh);
             if (!error) {
                 switch (state) {
@@ -568,8 +580,7 @@ queue_msg(struct ofpbuf *msg)
     return xid;
 }
 
-static void
-log_openflow_rl(struct vlog_rate_limit *rl, enum vlog_level level,
+static void log_openflow_rl(struct vlog_rate_limit *rl, enum vlog_level level,
                 const struct ofp_header *oh, const char *title)
 {
     if (!vlog_should_drop(&this_module, level, rl)) {
@@ -582,6 +593,7 @@ log_openflow_rl(struct vlog_rate_limit *rl, enum vlog_level level,
 static void
 ofctrl_recv(const struct ofp_header *oh, enum ofptype type)
 {
+    log_openflow(VLL_WARN, oh, "ofctrl_recv");
     if (type == OFPTYPE_ECHO_REQUEST) {
         queue_msg(make_echo_reply(oh));
     } else if (type == OFPTYPE_ERROR) {
