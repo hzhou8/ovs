@@ -660,7 +660,8 @@ exit:
 
 static void
 pinctrl_handle_log(const struct flow *headers,
-                   struct ofpbuf *userdata)
+                   struct ofpbuf *userdata,
+                   struct vlog_rate_limit *pin_log_rl)
 {
     uint32_t *type = ofpbuf_try_pull(userdata, sizeof *type);
     if (!type) {
@@ -681,13 +682,13 @@ pinctrl_handle_log(const struct flow *headers,
             break;
     }
     char *str_headers = flow_to_string(headers);
-    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(100, 5);
-    VLOG_WARN_RL(&rl, "LOG:%s %s", str_type, str_headers);
+    VLOG_WARN_RL(pin_log_rl, "LOG:%s %s", str_type, str_headers);
     free(str_headers);
 }
 
 static void
-process_packet_in(const struct ofp_header *msg)
+process_packet_in(const struct ofp_header *msg,
+                  struct vlog_rate_limit *pin_log_rl)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
@@ -747,7 +748,7 @@ process_packet_in(const struct ofp_header *msg)
         break;
 
     case ACTION_OPCODE_LOG:
-        pinctrl_handle_log(&headers, &userdata);
+        pinctrl_handle_log(&headers, &userdata, pin_log_rl);
         break;
 
     default:
@@ -758,7 +759,8 @@ process_packet_in(const struct ofp_header *msg)
 }
 
 static void
-pinctrl_recv(const struct ofp_header *oh, enum ofptype type)
+pinctrl_recv(const struct ofp_header *oh, enum ofptype type,
+             struct vlog_rate_limit *pin_log_rl)
 {
     if (type == OFPTYPE_ECHO_REQUEST) {
         queue_msg(make_echo_reply(oh));
@@ -770,7 +772,7 @@ pinctrl_recv(const struct ofp_header *oh, enum ofptype type)
         config.miss_send_len = UINT16_MAX;
         set_switch_config(swconn, &config);
     } else if (type == OFPTYPE_PACKET_IN) {
-        process_packet_in(oh);
+        process_packet_in(oh, pin_log_rl);
     } else if (type != OFPTYPE_ECHO_REPLY && type != OFPTYPE_BARRIER_REPLY) {
         if (VLOG_IS_DBG_ENABLED()) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(30, 300);
@@ -781,6 +783,25 @@ pinctrl_recv(const struct ofp_header *oh, enum ofptype type)
             free(s);
         }
     }
+}
+
+/* Get the rate limit settings for packet-in packet logging. */
+static void
+set_pin_log_rl(struct controller_ctx *ctx,
+               struct vlog_rate_limit *pin_log_rl)
+{
+    const struct ovsrec_open_vswitch *cfg
+        = ovsrec_open_vswitch_first(ctx->ovs_idl);
+    unsigned int rl_rate = (cfg ? smap_get_int(&cfg->external_ids,
+                                  "ovn-pin-log-rl-rate",
+                                  6000)
+                                : 6000);
+    unsigned int rl_burst = (cfg ? smap_get_int(&cfg->external_ids,
+                                   "ovn-pin-log-rl-burst",
+                                   1000)
+                                 : 1000);
+    token_bucket_set(&pin_log_rl->token_bucket, rl_rate,
+                     OVS_SAT_MUL(rl_burst, VLOG_MSG_TOKENS));
 }
 
 void
@@ -805,6 +826,9 @@ pinctrl_run(struct controller_ctx *ctx, const struct lport_index *lports,
             flush_put_mac_bindings();
         }
 
+        static struct vlog_rate_limit pin_log_rl = VLOG_RATE_LIMIT_INIT(1, 1);
+        set_pin_log_rl(ctx, &pin_log_rl);
+
         /* Process a limited number of messages per call. */
         for (int i = 0; i < 50; i++) {
             struct ofpbuf *msg = rconn_recv(swconn);
@@ -816,7 +840,7 @@ pinctrl_run(struct controller_ctx *ctx, const struct lport_index *lports,
             enum ofptype type;
 
             ofptype_decode(&type, oh);
-            pinctrl_recv(oh, type);
+            pinctrl_recv(oh, type, &pin_log_rl);
             ofpbuf_delete(msg);
         }
     }
