@@ -318,7 +318,7 @@ consider_port_binding(struct controller_ctx *ctx,
         }
 
         const struct sbrec_port_binding *peer = lport_lookup_by_name(
-            ctx->ovnsb_idl, peer_name);
+            ctx->ovnsb_cursors, peer_name);
         if (!peer || strcmp(peer->type, binding->type)) {
             return;
         }
@@ -385,7 +385,7 @@ consider_port_binding(struct controller_ctx *ctx,
         const char *distributed_port = smap_get_def(&binding->options,
                                                     "distributed-port", "");
         const struct sbrec_port_binding *distributed_binding
-            = lport_lookup_by_name(ctx->ovnsb_idl, distributed_port);
+            = lport_lookup_by_name(ctx->ovnsb_cursors, distributed_port);
 
         if (!distributed_binding) {
             /* Packet will be dropped. */
@@ -1109,7 +1109,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
          * rule with higher priority for every localport in this
          * datapath. */
         const struct sbrec_port_binding *pb = lport_lookup_by_name(
-            ctx->ovnsb_idl, localport);
+            ctx->ovnsb_cursors, localport);
         if (pb && !strcmp(pb->type, "localport")) {
             match_set_reg(&match, MFF_LOG_INPORT - MFF_REG0, pb->tunnel_key);
             match_set_metadata(&match, htonll(pb->datapath->tunnel_key));

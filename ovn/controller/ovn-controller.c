@@ -620,7 +620,8 @@ main(int argc, char *argv[])
         ovsdb_idl_create(ovnsb_remote, &sbrec_idl_class, true, true));
 
     create_ovnsb_indexes(ovnsb_idl_loop.idl);
-    lport_init(ovnsb_idl_loop.idl);
+    struct ovnsb_cursors ovnsb_cursors;
+    lport_init(ovnsb_cursors, ovnsb_idl_loop.idl);
 
     ovsdb_idl_omit_alert(ovnsb_idl_loop.idl, &sbrec_chassis_col_nb_cfg);
     update_sb_monitors(ovnsb_idl_loop.idl, NULL, NULL, NULL);
@@ -658,6 +659,7 @@ main(int argc, char *argv[])
             .ovs_idl_txn = ovsdb_idl_loop_run(&ovs_idl_loop),
             .ovnsb_idl = ovnsb_idl_loop.idl,
             .ovnsb_idl_txn = ovsdb_idl_loop_run(&ovnsb_idl_loop),
+            .ovnsb_cursors = &ovnsb_cursors,
         };
 
         update_probe_interval(&ctx, ovnsb_remote);

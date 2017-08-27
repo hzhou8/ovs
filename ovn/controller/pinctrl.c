@@ -1182,7 +1182,7 @@ run_put_mac_binding(struct controller_ctx *ctx,
 
     /* Convert logical datapath and logical port key into lport. */
     const struct sbrec_port_binding *pb
-        = lport_lookup_by_key(ctx->ovnsb_idl, pmb->dp_key, pmb->port_key);
+        = lport_lookup_by_key(ctx->ovnsb_cursors, pmb->dp_key, pmb->port_key);
     if (!pb) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
@@ -1462,7 +1462,7 @@ get_localnet_vifs_l3gwports(struct controller_ctx *ctx,
                 continue;
             }
             const struct sbrec_port_binding *pb
-                = lport_lookup_by_name(ctx->ovnsb_idl, iface_id);
+                = lport_lookup_by_name(ctx->ovnsb_cursors, iface_id);
             if (!pb) {
                 continue;
             }
@@ -1514,7 +1514,7 @@ pinctrl_is_chassis_resident(struct controller_ctx *ctx,
                             const char *port_name)
 {
     const struct sbrec_port_binding *pb
-        = lport_lookup_by_name(ctx->ovnsb_idl, port_name);
+        = lport_lookup_by_name(ctx->ovnsb_cursors, port_name);
     if (!pb || !pb->chassis) {
         return false;
     }
@@ -1643,7 +1643,7 @@ get_nat_addresses_and_keys(struct controller_ctx *ctx,
     SSET_FOR_EACH(gw_port, local_l3gw_ports) {
         const struct sbrec_port_binding *pb;
 
-        pb = lport_lookup_by_name(ctx->ovnsb_idl, gw_port);
+        pb = lport_lookup_by_name(ctx->ovnsb_cursors, gw_port);
         if (!pb) {
             continue;
         }
@@ -1712,7 +1712,7 @@ send_garp_run(struct controller_ctx *ctx,
     SSET_FOR_EACH (iface_id, &localnet_vifs) {
         const struct sbrec_port_binding *pb;
 
-        pb = lport_lookup_by_name(ctx->ovnsb_idl, iface_id);
+        pb = lport_lookup_by_name(ctx->ovnsb_cursors, iface_id);
         if (pb) {
             send_garp_update(pb, &localnet_ofports, local_datapaths,
                              &nat_addresses);
@@ -1724,7 +1724,7 @@ send_garp_run(struct controller_ctx *ctx,
     SSET_FOR_EACH (gw_port, &local_l3gw_ports) {
         const struct sbrec_port_binding *pb;
 
-        pb = lport_lookup_by_name(ctx->ovnsb_idl, gw_port);
+        pb = lport_lookup_by_name(ctx->ovnsb_cursors, gw_port);
         if (pb) {
             send_garp_update(pb, &localnet_ofports, local_datapaths,
                              &nat_addresses);

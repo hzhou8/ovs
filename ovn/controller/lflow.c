@@ -46,12 +46,12 @@ lflow_init(void)
 }
 
 struct lookup_port_aux {
-    struct ovsdb_idl *ovnsb_idl;
+    struct ovnsb_cursors *ovnsb_cursors;
     const struct sbrec_datapath_binding *dp;
 };
 
 struct condition_aux {
-    struct ovsdb_idl *ovnsb_idl;
+    struct ovnsb_cursors *ovnsb_cursors;
     const struct sbrec_chassis *chassis;
     const struct sset *active_tunnels;
     const struct chassis_index *chassis_index;
@@ -76,14 +76,14 @@ lookup_port_cb(const void *aux_, const char *port_name, unsigned int *portp)
     const struct lookup_port_aux *aux = aux_;
 
     const struct sbrec_port_binding *pb
-        = lport_lookup_by_name(aux->ovnsb_idl, port_name);
+        = lport_lookup_by_name(aux->ovnsb_cursors, port_name);
     if (pb && pb->datapath == aux->dp) {
         *portp = pb->tunnel_key;
         return true;
     }
 
     const struct sbrec_multicast_group *mg
-        = mcgroup_lookup_by_dp_name(aux->ovnsb_idl, aux->dp, port_name);
+        = mcgroup_lookup_by_dp_name(aux->ovnsb_cursors, aux->dp, port_name);
     if (mg) {
         *portp = mg->tunnel_key;
         return true;
@@ -98,7 +98,7 @@ is_chassis_resident_cb(const void *c_aux_, const char *port_name)
     const struct condition_aux *c_aux = c_aux_;
 
     const struct sbrec_port_binding *pb
-        = lport_lookup_by_name(c_aux->ovnsb_idl, port_name);
+        = lport_lookup_by_name(c_aux->ovnsb_cursors, port_name);
     if (!pb) {
         return false;
     }
@@ -243,7 +243,7 @@ consider_logical_flow(struct controller_ctx *ctx,
     uint64_t ofpacts_stub[1024 / 8];
     struct ofpbuf ofpacts = OFPBUF_STUB_INITIALIZER(ofpacts_stub);
     struct lookup_port_aux aux = {
-        .ovnsb_idl = ctx->ovnsb_idl,
+        .ovnsb_cursors = ctx->ovnsb_cursors,
         .dp = lflow->logical_datapath
     };
     struct ovnact_encode_params ep = {
@@ -285,7 +285,7 @@ consider_logical_flow(struct controller_ctx *ctx,
         return;
     }
 
-    struct condition_aux cond_aux = { ctx->ovnsb_idl, chassis, active_tunnels,
+    struct condition_aux cond_aux = { ctx->ovnsb_cursors, chassis, active_tunnels,
                                       chassis_index};
     expr = expr_simplify(expr, is_chassis_resident_cb, &cond_aux);
     expr = expr_normalize(expr);
@@ -348,7 +348,7 @@ consider_neighbor_flow(struct controller_ctx *ctx,
                        struct hmap *flow_table)
 {
     const struct sbrec_port_binding *pb
-        = lport_lookup_by_name(ctx->ovnsb_idl, b->logical_port);
+        = lport_lookup_by_name(ctx->ovnsb_cursors, b->logical_port);
     if (!pb) {
         return;
     }

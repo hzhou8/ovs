@@ -29,6 +29,7 @@ struct controller_ctx {
 
     struct ovsdb_idl *ovs_idl;
     struct ovsdb_idl_txn *ovs_idl_txn;
+    struct ovnsb_cursors *ovnsb_cursors;
 };
 
 /* States to move through when a new conntrack zone has been allocated. */

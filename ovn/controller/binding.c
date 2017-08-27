@@ -153,7 +153,7 @@ add_local_datapath__(struct controller_ctx *ctx,
             if (peer_name) {
                 const struct sbrec_port_binding *peer;
 
-                peer = lport_lookup_by_name( ctx->ovnsb_idl, peer_name);
+                peer = lport_lookup_by_name( ctx->ovnsb_cursors, peer_name);
 
                 if (peer && peer->datapath) {
                     add_local_datapath__(ctx, peer->datapath,
@@ -163,7 +163,7 @@ add_local_datapath__(struct controller_ctx *ctx,
                             ld->peer_dps,
                             ld->n_peer_dps * sizeof *ld->peer_dps);
                     ld->peer_dps[ld->n_peer_dps - 1] = datapath_lookup_by_key(
-                        ctx->ovnsb_idl, peer->datapath->tunnel_key);
+                        ctx->ovnsb_cursors, peer->datapath->tunnel_key);
                 }
             }
         }
