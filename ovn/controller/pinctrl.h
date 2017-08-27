@@ -34,6 +34,7 @@ void pinctrl_run(struct controller_ctx *,
                  const struct ovsrec_bridge *, const struct sbrec_chassis *,
                  const struct chassis_index *, struct hmap *local_datapaths,
                  struct sset *active_tunnels);
+void *pinctrl_thread_main(void *arg);
 void pinctrl_wait(struct controller_ctx *);
 void pinctrl_destroy(void);
 
