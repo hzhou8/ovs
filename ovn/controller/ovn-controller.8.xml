@@ -151,6 +151,16 @@
         network interface card, enabling encapsulation checksum may incur
         performance loss. In such cases, encapsulation checksums can be disabled.
       </dd>
+
+      <dt><code>external_ids:ovn-acl-log-rl-rate</code></dt>
+      <dd>
+        ACL log rate-limiting rate (per minute) of writing acl logs to file.
+      </dd>
+
+      <dt><code>external_ids:ovn-acl-log-rl-burst</code></dt>
+      <dd>
+        ACL log rate-limiting burst of writing acl logs to file.
+      </dd>
     </dl>
 
     <p>

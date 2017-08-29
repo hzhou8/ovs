@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include "openvswitch/types.h"
+#include "ovn/controller/ovn-controller.h"
 
 struct ofpbuf;
 struct flow;
@@ -51,4 +52,6 @@ uint8_t log_severity_from_string(const char *name);
 
 void handle_acl_log(const struct flow *headers, struct ofpbuf *userdata);
 
+void
+update_acl_log_rl(struct controller_ctx *ctx);
 #endif /* ovn/lib/acl-log.h */

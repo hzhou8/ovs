@@ -15,15 +15,22 @@
  */
 
 #include <config.h>
+#include "ovn/controller/ovn-controller.h"
 #include "ovn/lib/acl-log.h"
 #include <string.h>
 #include "flow.h"
 #include "openvswitch/json.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
+#include "lib/vswitch-idl.h"
 
 
 VLOG_DEFINE_THIS_MODULE(acl_log);
+
+#define DEFAULT_RL_RATE 6000
+#define DEFAULT_RL_BURST 1000
+static struct vlog_rate_limit acl_log_rl =
+    VLOG_RATE_LIMIT_INIT(DEFAULT_RL_RATE, DEFAULT_RL_BURST);
 
 const char *
 log_verdict_to_string(uint8_t verdict)
@@ -99,7 +106,26 @@ handle_acl_log(const struct flow *headers, struct ofpbuf *userdata)
                   log_severity_to_string(lph->severity));
     flow_format(&ds, headers, NULL);
 
-    VLOG_INFO("%s", ds_cstr(&ds));
+    VLOG_INFO_RL(&acl_log_rl, "%s", ds_cstr(&ds));
     ds_destroy(&ds);
     free(name);
 }
+
+/* Update the rate limit settings for acl logging. */
+void
+update_acl_log_rl(struct controller_ctx *ctx)
+{
+    const struct ovsrec_open_vswitch *cfg
+        = ovsrec_open_vswitch_first(ctx->ovs_idl);
+    unsigned int rl_rate = (cfg ? smap_get_int(&cfg->external_ids,
+                                  "ovn-acl-log-rl-rate",
+                                  DEFAULT_RL_RATE)
+                                : DEFAULT_RL_RATE);
+    unsigned int rl_burst = (cfg ? smap_get_int(&cfg->external_ids,
+                                   "ovn-acl-log-rl-burst",
+                                   DEFAULT_RL_BURST)
+                                 : DEFAULT_RL_BURST);
+    token_bucket_set(&acl_log_rl.token_bucket, rl_rate,
+                     OVS_SAT_MUL(rl_burst, VLOG_MSG_TOKENS));
+}
+

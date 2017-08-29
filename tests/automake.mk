@@ -368,7 +368,8 @@ tests_ovstest_SOURCES += \
 	tests/test-netlink-conntrack.c
 endif
 
-tests_ovstest_LDADD = lib/libopenvswitch.la ovn/lib/libovn.la
+tests_ovstest_LDADD = ovn/lib/libovn.la lib/libopenvswitch.la
+
 dist_check_SCRIPTS = tests/flowgen.pl
 
 noinst_PROGRAMS += tests/test-strtok_r

@@ -1043,6 +1043,8 @@ pinctrl_run(struct controller_ctx *ctx,
             flush_put_mac_bindings();
         }
 
+        update_acl_log_rl(ctx);
+
         /* Process a limited number of messages per call. */
         for (int i = 0; i < 50; i++) {
             struct ofpbuf *msg = rconn_recv(swconn);
