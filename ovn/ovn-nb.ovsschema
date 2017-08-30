@@ -1,7 +1,7 @@
 {
     "name": "OVN_Northbound",
-    "version": "5.8.0",
-    "cksum": "2812300190 16766",
+    "version": "5.9.0",
+    "cksum": "2103124828 16872",
     "tables": {
         "NB_Global": {
             "columns": {
@@ -19,7 +19,9 @@
                 "ssl": {
                     "type": {"key": {"type": "uuid",
                                      "refTable": "SSL"},
-                                     "min": 0, "max": 1}}},
+                                     "min": 0, "max": 1}},
+                "acl_log_invalid": {
+                    "type": {"key": "boolean", "min": 0, "max": 1}}},
             "maxRows": 1,
             "isRoot": true},
         "Logical_Switch": {
