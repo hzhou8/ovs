@@ -33,7 +33,6 @@ struct controller_ctx {
     unsigned long *ct_zone_bitmap;
     struct shash *pending_ct_zones;
     struct simap *ct_zones;   
-    struct group_table *group_table;
 };
 
 /* States to move through when a new conntrack zone has been allocated. */

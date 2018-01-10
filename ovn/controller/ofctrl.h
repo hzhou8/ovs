@@ -32,8 +32,9 @@ struct shash;
 
 /* Interface for OVN main loop. */
 void ofctrl_init(struct group_table *group_table);
-enum mf_field_id ofctrl_run(const struct ovsrec_bridge *br_int,
-                            struct shash *pending_ct_zones);
+void ofctrl_run(const struct ovsrec_bridge *br_int,
+                struct shash *pending_ct_zones);
+enum mf_field_id ofctrl_get_mf_field_id(void);
 bool ofctrl_can_put(void);
 void ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
                 int64_t nb_cfg);

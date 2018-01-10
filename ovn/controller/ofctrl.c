@@ -451,11 +451,21 @@ recv_S_UPDATE_FLOWS(const struct ofp_header *oh, enum ofptype type,
     }
 }
 
+
+enum mf_field_id
+ofctrl_get_mf_field_id(void)
+{
+    if (!rconn_is_connected(swconn)) {
+        return 0;
+    }
+    return (state == S_CLEAR_FLOWS || state == S_UPDATE_FLOWS
+            ? mff_ovn_geneve : 0);
+}
+
 /* Runs the OpenFlow state machine against 'br_int', which is local to the
  * hypervisor on which we are running.  Attempts to negotiate a Geneve option
- * field for class OVN_GENEVE_CLASS, type OVN_GENEVE_TYPE.  If successful,
- * returns the MFF_* field ID for the option, otherwise returns 0. */
-enum mf_field_id
+ * field for class OVN_GENEVE_CLASS, type OVN_GENEVE_TYPE. */
+void
 ofctrl_run(const struct ovsrec_bridge *br_int, struct shash *pending_ct_zones)
 {
     char *target = xasprintf("unix:%s/%s.mgmt", ovs_rundir(), br_int->name);
@@ -468,7 +478,7 @@ ofctrl_run(const struct ovsrec_bridge *br_int, struct shash *pending_ct_zones)
     rconn_run(swconn);
 
     if (!rconn_is_connected(swconn)) {
-        return 0;
+        return;
     }
     if (seqno != rconn_get_connection_seqno(swconn)) {
         seqno = rconn_get_connection_seqno(swconn);
@@ -531,9 +541,6 @@ ofctrl_run(const struct ovsrec_bridge *br_int, struct shash *pending_ct_zones)
          * point, so ensure that we come back again without waiting. */
         poll_immediate_wake();
     }
-
-    return (state == S_CLEAR_FLOWS || state == S_UPDATE_FLOWS
-            ? mff_ovn_geneve : 0);
 }
 
 void

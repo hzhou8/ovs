@@ -578,6 +578,19 @@ dummy_evaluate_change(struct engine_node *node)
     node->changed = true;
 }
 
+struct flow_output_data {
+    struct hmap *flow_table;
+    struct group_table *group_table;
+};
+
+static void
+flow_output_reset_old_data(struct engine_node *node)
+{
+    struct hmap *flow_table =
+        ((struct flow_output_data *)node->data)->flow_table;
+    hmap_clear(flow_table);
+}
+
 static void
 flow_output_run(struct engine_node *node)
 {
@@ -607,7 +620,6 @@ flow_output_run(struct engine_node *node)
     const struct sbrec_chassis *chassis = NULL;
     if (chassis_id) {
         chassis = get_chassis(ctx->ovnsb_idl, chassis_id);
-        encaps_run(ctx, br_int, chassis_id);
         bfd_calculate_active_tunnels(br_int, &active_tunnels);
         binding_run(ctx, br_int, chassis,
                     &chassis_index, &active_tunnels, &local_datapaths,
@@ -618,45 +630,33 @@ flow_output_run(struct engine_node *node)
         struct shash addr_sets = SHASH_INITIALIZER(&addr_sets);
         addr_sets_init(ctx, &addr_sets);
 
-        patch_run(ctx, br_int, chassis);
-
-        enum mf_field_id mff_ovn_geneve = ofctrl_run(br_int,
-                                                     ctx->pending_ct_zones);
-
         pinctrl_run(ctx, br_int, chassis, &chassis_index,
                     &local_datapaths, &active_tunnels);
         update_ct_zones(&local_lports, &local_datapaths, ctx->ct_zones,
                         ctx->ct_zone_bitmap, ctx->pending_ct_zones);
         if (ctx->ovs_idl_txn) {
-            if (ofctrl_can_put()) {
-                commit_ct_zones(br_int, ctx->pending_ct_zones);
+            struct hmap *flow_table =
+                ((struct flow_output_data *)node->data)->flow_table;
+            struct group_table *group_table =
+                ((struct flow_output_data *)node->data)->group_table;
+            commit_ct_zones(br_int, ctx->pending_ct_zones);
 
-                struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
-                lflow_run(ctx, chassis,
-                          &chassis_index, &local_datapaths, ctx->group_table,
-                          &addr_sets, &flow_table, &active_tunnels,
-                          &local_lport_ids);
+            lflow_run(ctx, chassis,
+                      &chassis_index, &local_datapaths, group_table,
+                      &addr_sets, flow_table, &active_tunnels,
+                      &local_lport_ids);
 
-                if (chassis_id) {
-                    bfd_run(ctx, br_int, chassis, &local_datapaths,
-                            &chassis_index);
-                }
-                physical_run(ctx, mff_ovn_geneve,
-                             br_int, chassis, ctx->ct_zones,
-                             &flow_table, &local_datapaths, &local_lports,
-                             &chassis_index, &active_tunnels);
-
-                ofctrl_put(&flow_table, ctx->pending_ct_zones,
-                           get_nb_cfg(ctx->ovnsb_idl));
-
-                hmap_destroy(&flow_table);
+            if (chassis_id) {
+                bfd_run(ctx, br_int, chassis, &local_datapaths,
+                        &chassis_index);
             }
-            if (ctx->ovnsb_idl_txn) {
-                int64_t cur_cfg = ofctrl_get_cur_cfg();
-                if (cur_cfg && cur_cfg != chassis->nb_cfg) {
-                    sbrec_chassis_set_nb_cfg(chassis, cur_cfg);
-                }
-            }
+            enum mf_field_id mff_ovn_geneve = ofctrl_get_mf_field_id();
+
+            physical_run(ctx, mff_ovn_geneve,
+                         br_int, chassis, ctx->ct_zones,
+                         flow_table, &local_datapaths, &local_lports,
+                         &chassis_index, &active_tunnels);
+
         }
 
         update_sb_monitors(ctx->ovnsb_idl, chassis,
@@ -752,7 +752,6 @@ main(int argc, char *argv[])
     ctx.ct_zone_bitmap = ct_zone_bitmap;
     ctx.pending_ct_zones = &pending_ct_zones;
     ctx.ct_zones = &ct_zones;
-    ctx.group_table = &group_table;
 
     struct engine_node dummy_input = {
         .name = "dummy-input",
@@ -760,12 +759,22 @@ main(int argc, char *argv[])
         .context = &ctx,
         .evaluate_change = dummy_evaluate_change
     };
+
+    struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
+
+    struct flow_output_data flow_output_data = {
+        .flow_table = &flow_table,
+        .group_table = &group_table
+    };
+
     struct engine_node flow_output = {
         .name = "flow-output",
         .n_inputs = 1,
         .inputs = {&dummy_input},
         .context = &ctx,
-        .compute = flow_output_run
+        .data = &flow_output_data,
+        .compute = flow_output_run,
+        .reset_old_data = flow_output_reset_old_data
     };
 
     uint64_t engine_run_id = 0;
@@ -799,8 +808,28 @@ main(int argc, char *argv[])
         const struct sbrec_chassis *chassis
             = chassis_id ? chassis_run(&ctx, chassis_id, br_int) : NULL;
 
-        // TODO: move control logic and pin_ctrl related logic back here
-        engine_run(&flow_output, ++engine_run_id);
+        ofctrl_run(br_int, &pending_ct_zones);
+
+        if (br_int && chassis) {
+            patch_run(&ctx, br_int, chassis);
+            encaps_run(&ctx, br_int, chassis_id);
+
+            if (ofctrl_can_put()) {
+                engine_run(&flow_output, ++engine_run_id);
+
+                ofctrl_put(&flow_table, &pending_ct_zones,
+                           get_nb_cfg(ctx.ovnsb_idl));
+            }
+
+        }
+
+        if (ctx.ovnsb_idl_txn) {
+            int64_t cur_cfg = ofctrl_get_cur_cfg();
+            if (cur_cfg && cur_cfg != chassis->nb_cfg) {
+                sbrec_chassis_set_nb_cfg(chassis, cur_cfg);
+            }
+        }
+
 
         if (pending_pkt.conn) {
             if (br_int && chassis) {
@@ -853,6 +882,7 @@ main(int argc, char *argv[])
         }
     }
 
+    hmap_destroy(&flow_table);
     /* It's time to exit.  Clean up the databases. */
     bool done = false;
     while (!done) {
