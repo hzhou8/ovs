@@ -572,10 +572,86 @@ create_ovnsb_indexes(struct ovsdb_idl *ovnsb_idl)
                                OVSDB_INDEX_ASC, NULL);
 }
 
+/*
 static void
 dummy_evaluate_change(struct engine_node *node)
 {
     node->changed = true;
+}
+*/
+
+struct runtime_data_data {
+    struct chassis_index *chassis_index;
+    struct hmap *local_datapaths;
+    struct sset *local_lports;
+    struct sset *local_lport_ids;
+    struct sset *active_tunnels;
+    struct shash *addr_sets;
+};
+
+static void
+runtime_data_evaluate_change(struct engine_node *node)
+{
+    struct controller_ctx *ctx = (struct controller_ctx *)node->context;
+    struct runtime_data_data *data = (struct runtime_data_data *)node->data;
+    struct hmap *local_datapaths = data->local_datapaths;
+    struct sset *local_lports = data->local_lports;
+    struct sset *local_lport_ids = data->local_lport_ids;
+    struct sset *active_tunnels = data->active_tunnels;
+    struct chassis_index *chassis_index = data->chassis_index;
+    struct shash *addr_sets = data->addr_sets;
+
+    chassis_index_init(chassis_index, ctx->ovnsb_idl);
+    sset_init(local_lports);
+    sset_init(local_lport_ids);
+    sset_init(active_tunnels);
+    const char *chassis_id = get_chassis_id(ctx->ovs_idl);
+    const struct ovsrec_bridge *br_int = get_br_int(ctx);
+
+    const struct sbrec_chassis *chassis = NULL;
+    if (chassis_id) {
+        chassis = get_chassis(ctx->ovnsb_idl, chassis_id);
+        bfd_calculate_active_tunnels(br_int, active_tunnels);
+        binding_run(ctx, br_int, chassis,
+                    chassis_index, active_tunnels, local_datapaths,
+                    local_lports, local_lport_ids);
+    }
+    if (br_int && chassis) {
+        addr_sets_init(ctx, addr_sets);
+
+        update_ct_zones(local_lports, local_datapaths, ctx->ct_zones,
+                        ctx->ct_zone_bitmap, ctx->pending_ct_zones);
+        update_sb_monitors(ctx->ovnsb_idl, chassis,
+                           local_lports, local_datapaths);
+    }
+    node->changed = true;
+}
+
+static void
+runtime_data_reset_old_data(struct engine_node *node)
+{
+    struct runtime_data_data *data = (struct runtime_data_data *)node->data;
+
+    struct hmap *local_datapaths = data->local_datapaths;
+    struct sset *local_lports = data->local_lports;
+    struct sset *local_lport_ids = data->local_lport_ids;
+    struct sset *active_tunnels = data->active_tunnels;
+    struct chassis_index *chassis_index = data->chassis_index;
+    struct shash *addr_sets = data->addr_sets;
+
+    struct local_datapath *cur_node, *next_node;
+    HMAP_FOR_EACH_SAFE (cur_node, next_node, hmap_node, local_datapaths) {
+        free(cur_node->peer_dps);
+        hmap_remove(local_datapaths, &cur_node->hmap_node);
+        free(cur_node);
+    }
+    hmap_clear(local_datapaths);
+    sset_destroy(local_lports);
+    sset_destroy(local_lport_ids);
+    sset_destroy(active_tunnels);
+    chassis_index_destroy(chassis_index);
+    expr_addr_sets_destroy(addr_sets);
+    shash_destroy(addr_sets);
 }
 
 struct flow_output_data {
@@ -594,46 +670,29 @@ flow_output_reset_old_data(struct engine_node *node)
 static void
 flow_output_run(struct engine_node *node)
 {
-
     struct controller_ctx *ctx = (struct controller_ctx *)node->context;
+    struct runtime_data_data *data = (struct runtime_data_data *)node->inputs[0]->data;
+    struct hmap *local_datapaths = data->local_datapaths;
+    struct sset *local_lports = data->local_lports;
+    struct sset *local_lport_ids = data->local_lport_ids;
+    struct sset *active_tunnels = data->active_tunnels;
+    struct chassis_index *chassis_index = data->chassis_index;
+    struct shash *addr_sets = data->addr_sets;
     const struct ovsrec_bridge *br_int = get_br_int(ctx);
-    /* Contains "struct local_datapath" nodes. */
-    struct hmap local_datapaths = HMAP_INITIALIZER(&local_datapaths);
-
-    /* Contains the name of each logical port resident on the local
-     * hypervisor.  These logical ports include the VIFs (and their child
-     * logical ports, if any) that belong to VMs running on the hypervisor,
-     * l2gateway ports for which options:l2gateway-chassis designates the
-     * local hypervisor, and localnet ports. */
-    struct sset local_lports = SSET_INITIALIZER(&local_lports);
-    /* Contains the same ports as local_lports, but in the format:
-     * <datapath-tunnel-key>_<port-tunnel-key> */
-    struct sset local_lport_ids = SSET_INITIALIZER(&local_lport_ids);
-    struct sset active_tunnels = SSET_INITIALIZER(&active_tunnels);
 
     const char *chassis_id = get_chassis_id(ctx->ovs_idl);
 
-    struct chassis_index chassis_index;
-
-    chassis_index_init(&chassis_index, ctx->ovnsb_idl);
 
     const struct sbrec_chassis *chassis = NULL;
     if (chassis_id) {
         chassis = get_chassis(ctx->ovnsb_idl, chassis_id);
-        bfd_calculate_active_tunnels(br_int, &active_tunnels);
-        binding_run(ctx, br_int, chassis,
-                    &chassis_index, &active_tunnels, &local_datapaths,
-                    &local_lports, &local_lport_ids);
     }
 
     if (br_int && chassis) {
-        struct shash addr_sets = SHASH_INITIALIZER(&addr_sets);
-        addr_sets_init(ctx, &addr_sets);
+        addr_sets_init(ctx, addr_sets);
 
-        pinctrl_run(ctx, br_int, chassis, &chassis_index,
-                    &local_datapaths, &active_tunnels);
-        update_ct_zones(&local_lports, &local_datapaths, ctx->ct_zones,
-                        ctx->ct_zone_bitmap, ctx->pending_ct_zones);
+        pinctrl_run(ctx, br_int, chassis, chassis_index,
+                    local_datapaths, active_tunnels);
         if (ctx->ovs_idl_txn) {
             struct hmap *flow_table =
                 ((struct flow_output_data *)node->data)->flow_table;
@@ -642,44 +701,22 @@ flow_output_run(struct engine_node *node)
             commit_ct_zones(br_int, ctx->pending_ct_zones);
 
             lflow_run(ctx, chassis,
-                      &chassis_index, &local_datapaths, group_table,
-                      &addr_sets, flow_table, &active_tunnels,
-                      &local_lport_ids);
+                      chassis_index, local_datapaths, group_table,
+                      addr_sets, flow_table, active_tunnels,
+                      local_lport_ids);
 
             if (chassis_id) {
-                bfd_run(ctx, br_int, chassis, &local_datapaths,
-                        &chassis_index);
+                bfd_run(ctx, br_int, chassis, local_datapaths,
+                        chassis_index);
             }
             enum mf_field_id mff_ovn_geneve = ofctrl_get_mf_field_id();
 
             physical_run(ctx, mff_ovn_geneve,
                          br_int, chassis, ctx->ct_zones,
-                         flow_table, &local_datapaths, &local_lports,
-                         &chassis_index, &active_tunnels);
-
+                         flow_table, local_datapaths, local_lports,
+                         chassis_index, active_tunnels);
         }
-
-        update_sb_monitors(ctx->ovnsb_idl, chassis,
-                           &local_lports, &local_datapaths);
-
-        expr_addr_sets_destroy(&addr_sets);
-        shash_destroy(&addr_sets);
     }
-
-
-    chassis_index_destroy(&chassis_index);
-
-    sset_destroy(&local_lports);
-    sset_destroy(&local_lport_ids);
-    sset_destroy(&active_tunnels);
-
-    struct local_datapath *cur_node, *next_node;
-    HMAP_FOR_EACH_SAFE (cur_node, next_node, hmap_node, &local_datapaths) {
-        free(cur_node->peer_dps);
-        hmap_remove(&local_datapaths, &cur_node->hmap_node);
-        free(cur_node);
-    }
-    hmap_destroy(&local_datapaths);
 }
 
 int
@@ -753,11 +790,38 @@ main(int argc, char *argv[])
     ctx.pending_ct_zones = &pending_ct_zones;
     ctx.ct_zones = &ct_zones;
 
-    struct engine_node dummy_input = {
-        .name = "dummy-input",
+    /* Contains "struct local_datapath" nodes. */
+    struct hmap local_datapaths = HMAP_INITIALIZER(&local_datapaths);
+
+    /* Contains the name of each logical port resident on the local
+     * hypervisor.  These logical ports include the VIFs (and their child
+     * logical ports, if any) that belong to VMs running on the hypervisor,
+     * l2gateway ports for which options:l2gateway-chassis designates the
+     * local hypervisor, and localnet ports. */
+    struct sset local_lports = SSET_INITIALIZER(&local_lports);
+    /* Contains the same ports as local_lports, but in the format:
+     * <datapath-tunnel-key>_<port-tunnel-key> */
+    struct sset local_lport_ids = SSET_INITIALIZER(&local_lport_ids);
+    struct sset active_tunnels = SSET_INITIALIZER(&active_tunnels);
+    struct chassis_index chassis_index;
+    struct shash addr_sets = SHASH_INITIALIZER(&addr_sets);
+    
+    struct runtime_data_data runtime_data_data = {
+        .chassis_index = &chassis_index,
+        .local_datapaths = &local_datapaths,
+        .local_lports = &local_lports,
+        .local_lport_ids = &local_lport_ids,
+        .active_tunnels = &active_tunnels,
+        .addr_sets = &addr_sets
+    };
+
+    struct engine_node runtime_data = {
+        .name = "all-input",
         .n_inputs = 0,
         .context = &ctx,
-        .evaluate_change = dummy_evaluate_change
+        .data = &runtime_data_data,
+        .evaluate_change = runtime_data_evaluate_change,
+        .reset_old_data = runtime_data_reset_old_data
     };
 
     struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
@@ -770,7 +834,7 @@ main(int argc, char *argv[])
     struct engine_node flow_output = {
         .name = "flow-output",
         .n_inputs = 1,
-        .inputs = {&dummy_input},
+        .inputs = {&runtime_data},
         .context = &ctx,
         .data = &flow_output_data,
         .compute = flow_output_run,
@@ -882,7 +946,24 @@ main(int argc, char *argv[])
         }
     }
 
+    expr_addr_sets_destroy(&addr_sets);
+    shash_destroy(&addr_sets);
+
+    chassis_index_destroy(&chassis_index);
+
+    sset_destroy(&local_lports);
+    sset_destroy(&local_lport_ids);
+    sset_destroy(&active_tunnels);
+    struct local_datapath *cur_node, *next_node;
+    HMAP_FOR_EACH_SAFE (cur_node, next_node, hmap_node, &local_datapaths) {
+        free(cur_node->peer_dps);
+        hmap_remove(&local_datapaths, &cur_node->hmap_node);
+        free(cur_node);
+    }
+    hmap_destroy(&local_datapaths);
+
     hmap_destroy(&flow_table);
+
     /* It's time to exit.  Clean up the databases. */
     bool done = false;
     while (!done) {

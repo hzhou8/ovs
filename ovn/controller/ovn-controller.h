@@ -30,6 +30,7 @@ struct controller_ctx {
     struct ovsdb_idl *ovs_idl;
     struct ovsdb_idl_txn *ovs_idl_txn;
 
+    // TODO: this should be input/output of some nodes
     unsigned long *ct_zone_bitmap;
     struct shash *pending_ct_zones;
     struct simap *ct_zones;   
