@@ -21,6 +21,18 @@ engine_run(struct engine_node *node, uint64_t run_id)
         return;
     }
     node->run_id = run_id;
+
+    if (node->changed) {
+        node->changed = false;
+        if (node->reset_old_data) {
+            node->reset_old_data(node);
+        }
+    }
+    if (!node->n_inputs) {
+        node->run(node);
+        VLOG_DBG("node: %s, changed: %d", node->name, node->changed);
+        return;
+    }
     
     size_t i;
 
@@ -40,15 +52,9 @@ engine_run(struct engine_node *node, uint64_t run_id)
         }
     }
 
-    if (node->changed) {
-        node->changed = false;
-        if (node->reset_old_data) {
-            node->reset_old_data(node);
-        }
-    }
     if (need_recompute) {
         VLOG_DBG("node: %s, recompute", node->name);
-        node->compute(node);
+        node->run(node);
     } else if (need_compute) {
         for (i = 0; i < node->n_inputs; i++) {
             if (node->inputs[i]->changed) {
@@ -59,14 +65,6 @@ engine_run(struct engine_node *node, uint64_t run_id)
         }
     }
 
-    if (need_compute || !node->n_inputs) {
-        if (node->evaluate_change) {
-            node->evaluate_change(node);
-        } else if (!node->n_inputs) {
-            VLOG_ERR("node %s is input but doesn't have evaluate_change().",
-                     node->name);
-        }
-    }
     VLOG_DBG("node: %s, changed: %d", node->name, node->changed);
 
 }

@@ -580,7 +580,7 @@ dummy_evaluate_change(struct engine_node *node)
 }
 */
 
-struct runtime_data_data {
+struct ed_type_runtime_data {
     struct chassis_index *chassis_index;
     struct hmap *local_datapaths;
     struct sset *local_lports;
@@ -590,10 +590,10 @@ struct runtime_data_data {
 };
 
 static void
-runtime_data_evaluate_change(struct engine_node *node)
+runtime_data_run(struct engine_node *node)
 {
     struct controller_ctx *ctx = (struct controller_ctx *)node->context;
-    struct runtime_data_data *data = (struct runtime_data_data *)node->data;
+    struct ed_type_runtime_data *data = (struct ed_type_runtime_data *)node->data;
     struct hmap *local_datapaths = data->local_datapaths;
     struct sset *local_lports = data->local_lports;
     struct sset *local_lport_ids = data->local_lport_ids;
@@ -628,9 +628,9 @@ runtime_data_evaluate_change(struct engine_node *node)
 }
 
 static void
-runtime_data_reset_old_data(struct engine_node *node)
+runtime_data_rst(struct engine_node *node)
 {
-    struct runtime_data_data *data = (struct runtime_data_data *)node->data;
+    struct ed_type_runtime_data *data = (struct ed_type_runtime_data *)node->data;
 
     struct hmap *local_datapaths = data->local_datapaths;
     struct sset *local_lports = data->local_lports;
@@ -654,16 +654,16 @@ runtime_data_reset_old_data(struct engine_node *node)
     shash_destroy(addr_sets);
 }
 
-struct flow_output_data {
+struct ed_type_flow_output {
     struct hmap *flow_table;
     struct group_table *group_table;
 };
 
 static void
-flow_output_reset_old_data(struct engine_node *node)
+flow_output_rst(struct engine_node *node)
 {
     struct hmap *flow_table =
-        ((struct flow_output_data *)node->data)->flow_table;
+        ((struct ed_type_flow_output *)node->data)->flow_table;
     hmap_clear(flow_table);
 }
 
@@ -671,7 +671,7 @@ static void
 flow_output_run(struct engine_node *node)
 {
     struct controller_ctx *ctx = (struct controller_ctx *)node->context;
-    struct runtime_data_data *data = (struct runtime_data_data *)node->inputs[0]->data;
+    struct ed_type_runtime_data *data = (struct ed_type_runtime_data *)node->inputs[0]->data;
     struct hmap *local_datapaths = data->local_datapaths;
     struct sset *local_lports = data->local_lports;
     struct sset *local_lport_ids = data->local_lport_ids;
@@ -695,9 +695,9 @@ flow_output_run(struct engine_node *node)
                     local_datapaths, active_tunnels);
         if (ctx->ovs_idl_txn) {
             struct hmap *flow_table =
-                ((struct flow_output_data *)node->data)->flow_table;
+                ((struct ed_type_flow_output *)node->data)->flow_table;
             struct group_table *group_table =
-                ((struct flow_output_data *)node->data)->group_table;
+                ((struct ed_type_flow_output *)node->data)->group_table;
             commit_ct_zones(br_int, ctx->pending_ct_zones);
 
             lflow_run(ctx, chassis,
@@ -806,7 +806,7 @@ main(int argc, char *argv[])
     struct chassis_index chassis_index;
     struct shash addr_sets = SHASH_INITIALIZER(&addr_sets);
     
-    struct runtime_data_data runtime_data_data = {
+    struct ed_type_runtime_data ed_runtime_data = {
         .chassis_index = &chassis_index,
         .local_datapaths = &local_datapaths,
         .local_lports = &local_lports,
@@ -815,31 +815,15 @@ main(int argc, char *argv[])
         .addr_sets = &addr_sets
     };
 
-    struct engine_node runtime_data = {
-        .name = "all-input",
-        .n_inputs = 0,
-        .context = &ctx,
-        .data = &runtime_data_data,
-        .evaluate_change = runtime_data_evaluate_change,
-        .reset_old_data = runtime_data_reset_old_data
-    };
-
     struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
 
-    struct flow_output_data flow_output_data = {
+    struct ed_type_flow_output ed_flow_output = {
         .flow_table = &flow_table,
         .group_table = &group_table
     };
 
-    struct engine_node flow_output = {
-        .name = "flow-output",
-        .n_inputs = 1,
-        .inputs = {&runtime_data},
-        .context = &ctx,
-        .data = &flow_output_data,
-        .compute = flow_output_run,
-        .reset_old_data = flow_output_reset_old_data
-    };
+    ENGINE_NODE(runtime_data,   0,    {},                   {});
+    ENGINE_NODE(flow_output,    1,    {&en_runtime_data},   {});
 
     uint64_t engine_run_id = 0;
     /* Main loop. */
@@ -879,7 +863,7 @@ main(int argc, char *argv[])
             encaps_run(&ctx, br_int, chassis_id);
 
             if (ofctrl_can_put()) {
-                engine_run(&flow_output, ++engine_run_id);
+                engine_run(&en_flow_output, ++engine_run_id);
 
                 ofctrl_put(&flow_table, &pending_ct_zones,
                            get_nb_cfg(ctx.ovnsb_idl));
