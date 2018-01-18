@@ -572,13 +572,25 @@ create_ovnsb_indexes(struct ovsdb_idl *ovnsb_idl)
                                OVSDB_INDEX_ASC, NULL);
 }
 
-/*
 static void
-dummy_evaluate_change(struct engine_node *node)
+sb_node_rst(struct engine_node *node)
 {
-    node->changed = true;
+    struct controller_ctx *ctx = (struct controller_ctx *)node->context;
+    ovsdb_idl_track_clear(ctx->ovnsb_idl);
 }
-*/
+
+ENGINE_FUNC_SB(chassis, CHASSIS);
+ENGINE_FUNC_SB(encap, ENCAP);
+ENGINE_FUNC_SB(address_set, ADDRESS_SET);
+ENGINE_FUNC_SB(multicast_group, MULTICAST_GROUP);
+ENGINE_FUNC_SB(datapath_binding, DATAPATH_BINDING);
+ENGINE_FUNC_SB(port_binding, PORT_BINDING);
+ENGINE_FUNC_SB(mac_binding, MAC_BINDING);
+ENGINE_FUNC_SB(logical_flow, LOGICAL_FLOW);
+ENGINE_FUNC_SB(dhcp_options, DHCP_OPTIONS);
+ENGINE_FUNC_SB(dhcpv6_options, DHCPV6_OPTIONS);
+ENGINE_FUNC_SB(dns, DNS);
+ENGINE_FUNC_SB(gateway_chassis, GATEWAY_CHASSIS);
 
 struct ed_type_runtime_data {
     struct chassis_index *chassis_index;
@@ -671,7 +683,9 @@ static void
 flow_output_run(struct engine_node *node)
 {
     struct controller_ctx *ctx = (struct controller_ctx *)node->context;
-    struct ed_type_runtime_data *data = (struct ed_type_runtime_data *)node->inputs[0]->data;
+    struct ed_type_runtime_data *data =
+        (struct ed_type_runtime_data *)engine_get_input(
+                "runtime_data", node)->data;
     struct hmap *local_datapaths = data->local_datapaths;
     struct sset *local_lports = data->local_lports;
     struct sset *local_lport_ids = data->local_lport_ids;
@@ -769,6 +783,7 @@ main(int argc, char *argv[])
 
     ovsdb_idl_omit_alert(ovnsb_idl_loop.idl, &sbrec_chassis_col_nb_cfg);
     update_sb_monitors(ovnsb_idl_loop.idl, NULL, NULL, NULL);
+    ovsdb_idl_track_add_all(ovnsb_idl_loop.idl);
     ovsdb_idl_get_initial_snapshot(ovnsb_idl_loop.idl);
 
     /* Initialize connection tracking zones. */
@@ -790,6 +805,7 @@ main(int argc, char *argv[])
     ctx.pending_ct_zones = &pending_ct_zones;
     ctx.ct_zones = &ct_zones;
 
+    // TODO: move below runtime_data alloc+init into engine_node run function, and free them in rst.
     /* Contains "struct local_datapath" nodes. */
     struct hmap local_datapaths = HMAP_INITIALIZER(&local_datapaths);
 
@@ -805,7 +821,7 @@ main(int argc, char *argv[])
     struct sset active_tunnels = SSET_INITIALIZER(&active_tunnels);
     struct chassis_index chassis_index;
     struct shash addr_sets = SHASH_INITIALIZER(&addr_sets);
-    
+
     struct ed_type_runtime_data ed_runtime_data = {
         .chassis_index = &chassis_index,
         .local_datapaths = &local_datapaths,
@@ -822,8 +838,35 @@ main(int argc, char *argv[])
         .group_table = &group_table
     };
 
-    ENGINE_NODE(runtime_data,   0,    {},                   {});
-    ENGINE_NODE(flow_output,    1,    {&en_runtime_data},   {});
+    ENGINE_NODE_SB(chassis, "chassis");
+    ENGINE_NODE_SB(encap, "encap");
+    ENGINE_NODE_SB(address_set, "address_set");
+    ENGINE_NODE_SB(multicast_group, "multicast_group");
+    ENGINE_NODE_SB(datapath_binding, "datapath_binding");
+    ENGINE_NODE_SB(port_binding, "port_binding");
+    ENGINE_NODE_SB(mac_binding, "mac_binding");
+    ENGINE_NODE_SB(logical_flow, "logical_flow");
+    ENGINE_NODE_SB(dhcp_options, "dhcp_options");
+    ENGINE_NODE_SB(dhcpv6_options, "dhcpv6_options");
+    ENGINE_NODE_SB(dns, "dns");
+    ENGINE_NODE_SB(gateway_chassis, "gateway_chassis");
+
+    ENGINE_NODE(runtime_data, "runtime_data");
+    ENGINE_NODE(flow_output, "flow_output");
+
+    engine_add_input(&en_flow_output, &en_runtime_data, NULL);
+    engine_add_input(&en_flow_output, &en_sb_chassis, NULL);
+    engine_add_input(&en_flow_output, &en_sb_encap, NULL);
+    engine_add_input(&en_flow_output, &en_sb_address_set, NULL);
+    engine_add_input(&en_flow_output, &en_sb_multicast_group, NULL);
+    engine_add_input(&en_flow_output, &en_sb_datapath_binding, NULL);
+    engine_add_input(&en_flow_output, &en_sb_port_binding, NULL);
+    engine_add_input(&en_flow_output, &en_sb_mac_binding, NULL);
+    engine_add_input(&en_flow_output, &en_sb_logical_flow, NULL);
+    engine_add_input(&en_flow_output, &en_sb_dhcp_options, NULL);
+    engine_add_input(&en_flow_output, &en_sb_dhcpv6_options, NULL);
+    engine_add_input(&en_flow_output, &en_sb_dns, NULL);
+    engine_add_input(&en_flow_output, &en_sb_gateway_chassis, NULL);
 
     uint64_t engine_run_id = 0;
     /* Main loop. */
@@ -924,6 +967,7 @@ main(int argc, char *argv[])
                 }
             }
         }
+        ovsdb_idl_track_clear(ctx.ovnsb_idl);
         poll_block();
         if (should_service_stop()) {
             exiting = true;

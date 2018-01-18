@@ -37,15 +37,15 @@ engine_run(struct engine_node *node, uint64_t run_id)
     size_t i;
 
     for (i = 0; i < node->n_inputs; i++) {
-        engine_run(node->inputs[i], run_id);
+        engine_run(node->inputs[i].node, run_id);
     }
 
     bool need_compute = false;
     bool need_recompute = false;
     for (i = 0; i < node->n_inputs; i++) {
-        if (node->inputs[i]->changed) {
+        if (node->inputs[i].node->changed) {
             need_compute = true;
-            if (!node->change_handler[i]) {
+            if (!node->inputs[i].change_handler) {
                 need_recompute = true;
                 break;
             }
@@ -57,10 +57,10 @@ engine_run(struct engine_node *node, uint64_t run_id)
         node->run(node);
     } else if (need_compute) {
         for (i = 0; i < node->n_inputs; i++) {
-            if (node->inputs[i]->changed) {
+            if (node->inputs[i].node->changed) {
                 VLOG_DBG("node: %s, handle change for input %s",
-                         node->name, node->inputs[i]->name);
-                node->change_handler[i](node->inputs[i], node);
+                         node->name, node->inputs[i].node->name);
+                node->inputs[i].change_handler(node);
             }
         }
     }
