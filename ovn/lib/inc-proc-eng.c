@@ -14,6 +14,8 @@
 
 VLOG_DEFINE_THIS_MODULE(inc_proc_eng);
 
+bool engine_force_recompute = false;
+
 void
 engine_run(struct engine_node *node, uint64_t run_id)
 {
@@ -42,18 +44,24 @@ engine_run(struct engine_node *node, uint64_t run_id)
 
     bool need_compute = false;
     bool need_recompute = false;
-    for (i = 0; i < node->n_inputs; i++) {
-        if (node->inputs[i].node->changed) {
-            need_compute = true;
-            if (!node->inputs[i].change_handler) {
-                need_recompute = true;
-                break;
+
+    if (engine_force_recompute) {
+        need_recompute = true;
+    } else {
+        for (i = 0; i < node->n_inputs; i++) {
+            if (node->inputs[i].node->changed) {
+                need_compute = true;
+                if (!node->inputs[i].change_handler) {
+                    need_recompute = true;
+                    break;
+                }
             }
         }
     }
 
     if (need_recompute) {
-        VLOG_DBG("node: %s, recompute", node->name);
+        VLOG_DBG("node: %s, recompute (%s)", node->name,
+                 engine_force_recompute ? "forced" : "triggered");
         node->run(node);
     } else if (need_compute) {
         for (i = 0; i < node->n_inputs; i++) {

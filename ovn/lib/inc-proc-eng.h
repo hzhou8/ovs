@@ -46,6 +46,13 @@ engine_add_input(struct engine_node *node, struct engine_node *input,
     node->n_inputs ++;
 }
 
+extern bool engine_force_recompute;
+static inline void
+engine_set_force_recompute(bool val)
+{
+    engine_force_recompute = val;
+}
+
 // TODO: add engine_reset(), which shall be called at the end of main loop,
 // to call reset_old_data for each node, because SB DB table tracking must
 // be reset at the end of each loop, instead beginning of next processing.
@@ -59,25 +66,42 @@ engine_add_input(struct engine_node *node, struct engine_node *input,
         .reset_old_data = NAME##_rst \
     };
 
-#define ENGINE_FUNC_SB(TBL_NAME, TBL_NAME_UPPER) \
+#define ENGINE_FUNC_OVSDB(DB_NAME, TBL_NAME, IDL) \
 static void \
-sb_##TBL_NAME##_run(struct engine_node *node) \
+DB_NAME##_##TBL_NAME##_run(struct engine_node *node) \
 { \
-    struct controller_ctx *ctx = (struct controller_ctx *)node->context; \
-    const struct sbrec_##TBL_NAME *sb_rec; \
-    SBREC_##TBL_NAME_UPPER##_FOR_EACH_TRACKED (sb_rec, ctx->ovnsb_idl) { \
+    static bool first_run = true; \
+    if (first_run) { \
+        first_run = false; \
         node->changed = true; \
         return; \
     } \
+    struct controller_ctx *ctx = (struct controller_ctx *)node->context; \
+    if (DB_NAME##rec_##TBL_NAME##_track_get_first(IDL)) { \
+        VLOG_DBG("track_get_first %s changed", node->name); \
+        node->changed = true; \
+        return; \
+    } \
+    VLOG_DBG("track_get_first %s not changed", node->name); \
     node->changed = false; \
 } \
  \
 static void \
-sb_##TBL_NAME##_rst(struct engine_node *node) \
+DB_NAME##_##TBL_NAME##_rst(struct engine_node *node OVS_UNUSED) \
 { \
-    /* sb_node_rst(node); */ \
+    /* DB_NAME##_node_rst(node); */ \
 }
+
+#define ENGINE_FUNC_SB(TBL_NAME) \
+    ENGINE_FUNC_OVSDB(sb, TBL_NAME, ctx->ovnsb_idl)
+
+#define ENGINE_FUNC_OVS(TBL_NAME) \
+    ENGINE_FUNC_OVSDB(ovs, TBL_NAME, ctx->ovs_idl)
 
 #define ENGINE_NODE_SB(TBL_NAME, TBL_NAME_STR) \
     void *ed_sb_##TBL_NAME; \
     ENGINE_NODE(sb_##TBL_NAME, TBL_NAME_STR)
+
+#define ENGINE_NODE_OVS(TBL_NAME, TBL_NAME_STR) \
+    void *ed_ovs_##TBL_NAME; \
+    ENGINE_NODE(ovs_##TBL_NAME, TBL_NAME_STR)
