@@ -681,16 +681,16 @@ runtime_data_rst(struct engine_node *node OVS_UNUSED)
 }
 
 struct ed_type_flow_output {
-    struct hmap *flow_table;
     struct group_table *group_table;
 };
 
 static void
-flow_output_rst(struct engine_node *node)
+flow_output_rst(struct engine_node *node OVS_UNUSED)
 {
-    struct hmap *flow_table =
+/*    struct hmap *flow_table =
         ((struct ed_type_flow_output *)node->data)->flow_table;
     hmap_clear(flow_table);
+    */
 }
 
 static void
@@ -717,18 +717,22 @@ flow_output_run(struct engine_node *node)
     }
 
     ovs_assert(br_int && chassis);
-    addr_sets_init(ctx, addr_sets);
 
     if (ctx->ovs_idl_txn) {
-        struct hmap *flow_table =
-            ((struct ed_type_flow_output *)node->data)->flow_table;
+        static bool first_run = true;
+        if (first_run) {
+            first_run = false;
+        } else {
+            ofctrl_flow_table_clear();
+        }
+        // TODO: move group_table from node data to ofctrl module data
         struct group_table *group_table =
             ((struct ed_type_flow_output *)node->data)->group_table;
         commit_ct_zones(br_int, ctx->pending_ct_zones);
 
         lflow_run(ctx, chassis,
                   chassis_index, local_datapaths, group_table,
-                  addr_sets, flow_table, active_tunnels,
+                  addr_sets, active_tunnels,
                   local_lport_ids);
 
         bfd_run(ctx, br_int, chassis, local_datapaths,
@@ -737,7 +741,7 @@ flow_output_run(struct engine_node *node)
 
         physical_run(ctx, mff_ovn_geneve,
                      br_int, chassis, ctx->ct_zones,
-                     flow_table, local_datapaths, local_lports,
+                     local_datapaths, local_lports,
                      chassis_index, active_tunnels);
     }
     node->changed = true;
@@ -842,10 +846,7 @@ main(int argc, char *argv[])
         .addr_sets = &addr_sets
     };
 
-    struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
-
     struct ed_type_flow_output ed_flow_output = {
-        .flow_table = &flow_table,
         .group_table = &group_table
     };
 
@@ -904,6 +905,7 @@ main(int argc, char *argv[])
             free(ovnsb_remote);
             ovnsb_remote = new_ovnsb_remote;
             ovsdb_idl_set_remote(ovnsb_idl_loop.idl, ovnsb_remote, true);
+            // TODO: how will change tracking work when this happens?
         } else {
             free(new_ovnsb_remote);
         }
@@ -937,7 +939,7 @@ main(int argc, char *argv[])
                 engine_run(&en_flow_output, ++engine_run_id);
                 // TODO: It is possible that the flow change in last iteration didn't get put because ofctrl_can_put() == false. So this time even there is no change, we can't skip. But how to optimize?
                 if (en_flow_output.changed) {
-                    ofctrl_put(&flow_table, &pending_ct_zones,
+                    ofctrl_put(&pending_ct_zones,
                                get_nb_cfg(ctx.ovnsb_idl));
                 }
 
@@ -1037,8 +1039,6 @@ main(int argc, char *argv[])
         free(cur_node);
     }
     hmap_destroy(&local_datapaths);
-
-    hmap_destroy(&flow_table);
 
     /* It's time to exit.  Clean up the databases. */
     bool done = false;

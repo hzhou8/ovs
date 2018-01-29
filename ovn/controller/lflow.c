@@ -68,7 +68,6 @@ static void consider_logical_flow(struct controller_ctx *ctx,
                                   struct hmap *nd_ra_opts,
                                   uint32_t *conj_id_ofs,
                                   const struct shash *addr_sets,
-                                  struct hmap *flow_table,
                                   struct sset *active_tunnels,
                                   struct sset *local_lport_ids);
 
@@ -146,7 +145,6 @@ add_logical_flows(struct controller_ctx *ctx,
                   struct group_table *group_table,
                   const struct sbrec_chassis *chassis,
                   const struct shash *addr_sets,
-                  struct hmap *flow_table,
                   struct sset *active_tunnels,
                   struct sset *local_lport_ids)
 {
@@ -176,7 +174,7 @@ add_logical_flows(struct controller_ctx *ctx,
                               lflow, local_datapaths,
                               group_table, chassis,
                               &dhcp_opts, &dhcpv6_opts, &nd_ra_opts,
-                              &conj_id_ofs, addr_sets, flow_table,
+                              &conj_id_ofs, addr_sets,
                               active_tunnels, local_lport_ids);
     }
 
@@ -197,7 +195,6 @@ consider_logical_flow(struct controller_ctx *ctx,
                       struct hmap *nd_ra_opts,
                       uint32_t *conj_id_ofs,
                       const struct shash *addr_sets,
-                      struct hmap *flow_table,
                       struct sset *active_tunnels,
                       struct sset *local_lport_ids)
 {
@@ -326,7 +323,7 @@ consider_logical_flow(struct controller_ctx *ctx,
             }
         }
         if (!m->n) {
-            ofctrl_add_flow(flow_table, ptable, lflow->priority,
+            ofctrl_add_flow(ptable, lflow->priority,
                             lflow->header_.uuid.parts[0], &m->match, &ofpacts);
         } else {
             uint64_t conj_stubs[64 / 8];
@@ -342,7 +339,7 @@ consider_logical_flow(struct controller_ctx *ctx,
                 dst->clause = src->clause;
                 dst->n_clauses = src->n_clauses;
             }
-            ofctrl_add_flow(flow_table, ptable, lflow->priority, 0, &m->match,
+            ofctrl_add_flow(ptable, lflow->priority, 0, &m->match,
                             &conj);
             ofpbuf_uninit(&conj);
         }
@@ -368,8 +365,7 @@ put_load(const uint8_t *data, size_t len,
 
 static void
 consider_neighbor_flow(struct controller_ctx *ctx,
-                       const struct sbrec_mac_binding *b,
-                       struct hmap *flow_table)
+                       const struct sbrec_mac_binding *b)
 {
     const struct sbrec_port_binding *pb
         = lport_lookup_by_name(ctx->ovnsb_idl, b->logical_port);
@@ -411,19 +407,18 @@ consider_neighbor_flow(struct controller_ctx *ctx,
     uint64_t stub[1024 / 8];
     struct ofpbuf ofpacts = OFPBUF_STUB_INITIALIZER(stub);
     put_load(mac.ea, sizeof mac.ea, MFF_ETH_DST, 0, 48, &ofpacts);
-    ofctrl_add_flow(flow_table, OFTABLE_MAC_BINDING, 100, 0, &match, &ofpacts);
+    ofctrl_add_flow(OFTABLE_MAC_BINDING, 100, 0, &match, &ofpacts);
     ofpbuf_uninit(&ofpacts);
 }
 
 /* Adds an OpenFlow flow to flow tables for each MAC binding in the OVN
  * southbound database. */
 static void
-add_neighbor_flows(struct controller_ctx *ctx,
-                   struct hmap *flow_table)
+add_neighbor_flows(struct controller_ctx *ctx)
 {
     const struct sbrec_mac_binding *b;
     SBREC_MAC_BINDING_FOR_EACH (b, ctx->ovnsb_idl) {
-        consider_neighbor_flow(ctx, b, flow_table);
+        consider_neighbor_flow(ctx, b);
     }
 }
 
@@ -436,14 +431,13 @@ lflow_run(struct controller_ctx *ctx,
           const struct hmap *local_datapaths,
           struct group_table *group_table,
           const struct shash *addr_sets,
-          struct hmap *flow_table,
           struct sset *active_tunnels,
           struct sset *local_lport_ids)
 {
     add_logical_flows(ctx, chassis_index, local_datapaths,
-                      group_table, chassis, addr_sets, flow_table,
+                      group_table, chassis, addr_sets,
                       active_tunnels, local_lport_ids);
-    add_neighbor_flows(ctx, flow_table);
+    add_neighbor_flows(ctx);
 }
 
 void

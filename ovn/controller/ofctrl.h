@@ -36,7 +36,7 @@ void ofctrl_run(const struct ovsrec_bridge *br_int,
                 struct shash *pending_ct_zones);
 enum mf_field_id ofctrl_get_mf_field_id(void);
 bool ofctrl_can_put(void);
-void ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
+void ofctrl_put(struct shash *pending_ct_zones,
                 int64_t nb_cfg);
 void ofctrl_wait(void);
 void ofctrl_destroy(void);
@@ -50,7 +50,7 @@ char *ofctrl_inject_pkt(const struct ovsrec_bridge *br_int,
                         const char *flow_s, const struct shash *addr_sets);
 
 /* Flow table interfaces to the rest of ovn-controller. */
-void ofctrl_add_flow(struct hmap *desired_flows, uint8_t table_id,
+void ofctrl_add_flow(uint8_t table_id,
                      uint16_t priority, uint64_t cookie,
                      const struct match *, const struct ofpbuf *ofpacts);
 
