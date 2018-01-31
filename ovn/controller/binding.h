@@ -34,5 +34,8 @@ void binding_run(struct controller_ctx *, const struct ovsrec_bridge *br_int,
                  struct sset *active_tunnels, struct hmap *local_datapaths,
                  struct sset *local_lports, struct sset *local_lport_ids);
 bool binding_cleanup(struct controller_ctx *, const struct sbrec_chassis *);
+bool binding_evaluate_port_binding_changes(
+            struct controller_ctx *ctx,
+            const struct sbrec_chassis *chassis_rec);
 
 #endif /* ovn/binding.h */

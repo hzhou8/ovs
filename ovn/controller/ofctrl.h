@@ -52,7 +52,10 @@ char *ofctrl_inject_pkt(const struct ovsrec_bridge *br_int,
 /* Flow table interfaces to the rest of ovn-controller. */
 void ofctrl_add_flow(uint8_t table_id,
                      uint16_t priority, uint64_t cookie,
-                     const struct match *, const struct ofpbuf *ofpacts);
+                     const struct match *, const struct ofpbuf *ofpacts,
+                     const struct uuid *lflow_uuid);
+
+void ofctrl_remove_flows(const struct uuid *lflow_uuid);
 
 void ofctrl_flow_table_clear(void);
 

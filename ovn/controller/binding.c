@@ -580,6 +580,36 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     hmap_destroy(&qos_map);
 }
 
+/* Check if port_binding changes are impacting */
+bool
+binding_evaluate_port_binding_changes(
+            struct controller_ctx *ctx,
+            const struct sbrec_chassis *chassis_rec)
+{
+    const struct sbrec_port_binding *binding_rec;
+    SBREC_PORT_BINDING_FOR_EACH_TRACKED(binding_rec, ctx->ovnsb_idl) {
+        if (sbrec_port_binding_is_deleted(binding_rec) ||
+                sbrec_port_binding_is_new(binding_rec)) {
+            if (binding_rec->chassis == chassis_rec) {
+                return true;
+            }
+            if (!strcmp(binding_rec->type, "patch")) {
+                return true;
+            }
+        } else {
+            /* update - if old chassis or new chassis is local, return false */
+            // TODO: how to find out old record from track?
+            if (binding_rec->chassis == chassis_rec) {
+                return true;
+            }
+            if (!strcmp(binding_rec->type, "patch")) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 /* Returns true if the database is all cleaned up, false if more work is
  * required. */
 bool

@@ -68,7 +68,13 @@ engine_run(struct engine_node *node, uint64_t run_id)
             if (node->inputs[i].node->changed) {
                 VLOG_DBG("node: %s, handle change for input %s",
                          node->name, node->inputs[i].node->name);
-                node->inputs[i].change_handler(node);
+                if (!node->inputs[i].change_handler(node)) {
+                    VLOG_DBG("node: %s, can't handle change for input %s, "
+                             "fall back to recompute",
+                             node->name, node->inputs[i].node->name);
+                    node->run(node);
+                    break;
+                }
             }
         }
     }

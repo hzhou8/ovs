@@ -70,6 +70,14 @@ void lflow_run(struct controller_ctx *,
                const struct shash *addr_sets,
                struct sset *active_tunnels,
                struct sset *local_lport_ids);
+void lflow_handle_changed_flows(struct controller_ctx *ctx,
+                  const struct sbrec_chassis *chassis,
+                  const struct chassis_index *chassis_index,
+                  const struct hmap *local_datapaths,
+                  struct group_table *group_table,
+                  const struct shash *addr_sets,
+                  struct sset *active_tunnels,
+                  struct sset *local_lport_ids);
 void lflow_destroy(void);
 
 #endif /* ovn/lflow.h */

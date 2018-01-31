@@ -183,6 +183,62 @@ add_logical_flows(struct controller_ctx *ctx,
     nd_ra_opts_destroy(&nd_ra_opts);
 }
 
+void
+lflow_handle_changed_flows(struct controller_ctx *ctx,
+                  const struct sbrec_chassis *chassis,
+                  const struct chassis_index *chassis_index,
+                  const struct hmap *local_datapaths,
+                  struct group_table *group_table,
+                  const struct shash *addr_sets,
+                  struct sset *active_tunnels,
+                  struct sset *local_lport_ids)
+{
+    // TODO: how to set conj_id_ofs in incremental processing?
+    uint32_t conj_id_ofs = 1;
+    const struct sbrec_logical_flow *lflow;
+
+    struct hmap dhcp_opts = HMAP_INITIALIZER(&dhcp_opts);
+    struct hmap dhcpv6_opts = HMAP_INITIALIZER(&dhcpv6_opts);
+    const struct sbrec_dhcp_options *dhcp_opt_row;
+    SBREC_DHCP_OPTIONS_FOR_EACH(dhcp_opt_row, ctx->ovnsb_idl) {
+        dhcp_opt_add(&dhcp_opts, dhcp_opt_row->name, dhcp_opt_row->code,
+                     dhcp_opt_row->type);
+    }
+
+
+    const struct sbrec_dhcpv6_options *dhcpv6_opt_row;
+    SBREC_DHCPV6_OPTIONS_FOR_EACH(dhcpv6_opt_row, ctx->ovnsb_idl) {
+       dhcp_opt_add(&dhcpv6_opts, dhcpv6_opt_row->name, dhcpv6_opt_row->code,
+                    dhcpv6_opt_row->type);
+    }
+
+    struct hmap nd_ra_opts = HMAP_INITIALIZER(&nd_ra_opts);
+    nd_ra_opts_init(&nd_ra_opts);
+
+    SBREC_LOGICAL_FLOW_FOR_EACH_TRACKED (lflow, ctx->ovnsb_idl) {
+        /* Remove any flows that should be removed. */
+        if (sbrec_logical_flow_is_deleted(lflow)) {
+            ofctrl_remove_flows(&lflow->header_.uuid);
+        } else {
+            /* Now, add/modify existing flows. If the logical
+             * flow is a modification, just remove the flows
+             * for this row, and then add new flows. */
+            if (!sbrec_logical_flow_is_new(lflow)) {
+                ofctrl_remove_flows(&lflow->header_.uuid);
+            }
+            consider_logical_flow(ctx, chassis_index,
+                                  lflow, local_datapaths,
+                                  group_table, chassis,
+                                  &dhcp_opts, &dhcpv6_opts, &nd_ra_opts,
+                                  &conj_id_ofs, addr_sets,
+                                  active_tunnels, local_lport_ids);
+        }
+    }
+    dhcp_opts_destroy(&dhcp_opts);
+    dhcp_opts_destroy(&dhcpv6_opts);
+    nd_ra_opts_destroy(&nd_ra_opts);
+}
+
 static void
 consider_logical_flow(struct controller_ctx *ctx,
                       const struct chassis_index *chassis_index,
@@ -260,6 +316,7 @@ consider_logical_flow(struct controller_ctx *ctx,
         .is_switch = is_switch(ldp),
         .is_gateway_router = is_gateway_router(ldp, local_datapaths),
         .group_table = group_table,
+        .lflow_uuid = lflow->header_.uuid,
 
         .pipeline = ingress ? OVNACT_P_INGRESS : OVNACT_P_EGRESS,
         .ingress_ptable = OFTABLE_LOG_INGRESS_PIPELINE,
@@ -324,7 +381,8 @@ consider_logical_flow(struct controller_ctx *ctx,
         }
         if (!m->n) {
             ofctrl_add_flow(ptable, lflow->priority,
-                            lflow->header_.uuid.parts[0], &m->match, &ofpacts);
+                            lflow->header_.uuid.parts[0], &m->match, &ofpacts,
+                            &lflow->header_.uuid);
         } else {
             uint64_t conj_stubs[64 / 8];
             struct ofpbuf conj;
@@ -340,7 +398,7 @@ consider_logical_flow(struct controller_ctx *ctx,
                 dst->n_clauses = src->n_clauses;
             }
             ofctrl_add_flow(ptable, lflow->priority, 0, &m->match,
-                            &conj);
+                            &conj, &lflow->header_.uuid);
             ofpbuf_uninit(&conj);
         }
     }
@@ -407,7 +465,8 @@ consider_neighbor_flow(struct controller_ctx *ctx,
     uint64_t stub[1024 / 8];
     struct ofpbuf ofpacts = OFPBUF_STUB_INITIALIZER(stub);
     put_load(mac.ea, sizeof mac.ea, MFF_ETH_DST, 0, 48, &ofpacts);
-    ofctrl_add_flow(OFTABLE_MAC_BINDING, 100, 0, &match, &ofpacts);
+    ofctrl_add_flow(OFTABLE_MAC_BINDING, 100, 0, &match, &ofpacts,
+                    &b->header_.uuid);
     ofpbuf_uninit(&ofpacts);
 }
 

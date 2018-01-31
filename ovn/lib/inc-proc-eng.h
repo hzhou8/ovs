@@ -5,8 +5,12 @@ struct engine_node;
 
 struct engine_node_input {
     struct engine_node *node;
-    /* change_handler handles one input change against "old_data" of all other inputs */
-    void (*change_handler)(struct engine_node *node);
+    /* change_handler handles one input change against "old_data" of all
+     * other inputs, returns:
+     *  - true: if change can be handled
+     *  - false: if change cannot be handled (suggesting full recompute)
+     */
+    bool (*change_handler)(struct engine_node *node);
 };
 
 struct engine_node {
@@ -39,7 +43,7 @@ engine_get_input(const char *input_name, struct engine_node *node)
 
 static inline void
 engine_add_input(struct engine_node *node, struct engine_node *input,
-    void (*change_handler)(struct engine_node *node))
+    bool (*change_handler)(struct engine_node *node))
 {
     node->inputs[node->n_inputs].node = input;
     node->inputs[node->n_inputs].change_handler = change_handler;
@@ -78,11 +82,9 @@ DB_NAME##_##TBL_NAME##_run(struct engine_node *node) \
     } \
     struct controller_ctx *ctx = (struct controller_ctx *)node->context; \
     if (DB_NAME##rec_##TBL_NAME##_track_get_first(IDL)) { \
-        VLOG_DBG("track_get_first %s changed", node->name); \
         node->changed = true; \
         return; \
     } \
-    VLOG_DBG("track_get_first %s not changed", node->name); \
     node->changed = false; \
 } \
  \
