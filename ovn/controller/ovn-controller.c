@@ -860,7 +860,7 @@ main(int argc, char *argv[])
     bool exiting;
     int retval;
 
-    vlog_set_levels(NULL, VLF_ANY_DESTINATION, VLL_DBG);
+//    vlog_set_levels(NULL, VLF_ANY_DESTINATION, VLL_DBG);
     ovs_cmdl_proctitle_init(argc, argv);
     set_program_name(argv[0]);
     service_start(&argc, &argv);
