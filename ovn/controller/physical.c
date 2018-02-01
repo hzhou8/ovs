@@ -358,7 +358,7 @@ consider_port_binding(struct controller_ctx *ctx,
         ofpact_finish_CLONE(ofpacts_p, &clone);
 
         ofctrl_add_flow(OFTABLE_LOG_TO_PHY, 100, 0,
-                        &match, ofpacts_p, hc_uuid);
+                        &match, ofpacts_p, &binding->header_.uuid);
         return;
     }
 
@@ -426,7 +426,7 @@ consider_port_binding(struct controller_ctx *ctx,
         }
 
         ofctrl_add_flow(OFTABLE_LOCAL_OUTPUT, 100, 0,
-                        &match, ofpacts_p, hc_uuid);
+                        &match, ofpacts_p, &binding->header_.uuid);
 
         goto out;
     }
@@ -558,7 +558,7 @@ consider_port_binding(struct controller_ctx *ctx,
         /* Resubmit to first logical ingress pipeline table. */
         put_resubmit(OFTABLE_LOG_INGRESS_PIPELINE, ofpacts_p);
         ofctrl_add_flow(OFTABLE_PHY_TO_LOG,
-                        tag ? 150 : 100, 0, &match, ofpacts_p, hc_uuid);
+                        tag ? 150 : 100, 0, &match, ofpacts_p, &binding->header_.uuid);
 
         if (!tag && (!strcmp(binding->type, "localnet")
                      || !strcmp(binding->type, "l2gateway"))) {
@@ -568,7 +568,7 @@ consider_port_binding(struct controller_ctx *ctx,
              * action. */
             ofpbuf_pull(ofpacts_p, ofpacts_orig_size);
             match_set_dl_tci_masked(&match, 0, htons(VLAN_CFI));
-            ofctrl_add_flow(0, 100, 0, &match, ofpacts_p, hc_uuid);
+            ofctrl_add_flow(0, 100, 0, &match, ofpacts_p, &binding->header_.uuid);
         }
 
         /* Table 65, Priority 100.
@@ -596,7 +596,7 @@ consider_port_binding(struct controller_ctx *ctx,
             ofpact_put_STRIP_VLAN(ofpacts_p);
         }
         ofctrl_add_flow(OFTABLE_LOG_TO_PHY, 100, 0,
-                        &match, ofpacts_p, hc_uuid);
+                        &match, ofpacts_p, &binding->header_.uuid);
     } else if (!tun && !is_ha_remote) {
         /* Remote port connected by localnet port */
         /* Table 33, priority 100.
@@ -619,7 +619,7 @@ consider_port_binding(struct controller_ctx *ctx,
         /* Resubmit to table 33. */
         put_resubmit(OFTABLE_LOCAL_OUTPUT, ofpacts_p);
         ofctrl_add_flow(OFTABLE_LOCAL_OUTPUT, 100, 0,
-                        &match, ofpacts_p, hc_uuid);
+                        &match, ofpacts_p, &binding->header_.uuid);
     } else {
         /* Remote port connected by tunnel */
 
@@ -710,7 +710,7 @@ consider_port_binding(struct controller_ctx *ctx,
             ofpact_finish_BUNDLE(ofpacts_p, &bundle);
         }
         ofctrl_add_flow(OFTABLE_REMOTE_OUTPUT, 100, 0,
-                        &match, ofpacts_p, hc_uuid);
+                        &match, ofpacts_p, &binding->header_.uuid);
     }
 out:
     if (gateway_chassis) {
@@ -857,6 +857,33 @@ update_ofports(struct simap *old, struct simap *new)
 }
 
 void
+physical_handle_port_binding_changes(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
+             const struct sbrec_chassis *chassis,
+             const struct simap *ct_zones,
+             struct hmap *local_datapaths,
+             struct chassis_index *chassis_index,
+             struct sset *active_tunnels)
+{
+    const struct sbrec_port_binding *binding;
+    struct ofpbuf ofpacts;
+    ofpbuf_init(&ofpacts, 0);
+    SBREC_PORT_BINDING_FOR_EACH_TRACKED (binding, ctx->ovnsb_idl) {
+        if (sbrec_port_binding_is_deleted(binding)) {
+            ofctrl_remove_flows(&binding->header_.uuid);
+        } else {
+            if (!sbrec_port_binding_is_new(binding)) {
+                ofctrl_remove_flows(&binding->header_.uuid);
+            }
+        consider_port_binding(ctx, mff_ovn_geneve, ct_zones,
+                              chassis_index, active_tunnels,
+                              local_datapaths, binding, chassis,
+                              &ofpacts);
+        }
+    }
+
+}
+
+void
 physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
              const struct ovsrec_bridge *br_int,
              const struct sbrec_chassis *chassis,
@@ -978,6 +1005,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
     /* Capture changed or removed openflow ports. */
     physical_map_changed |= update_ofports(&localvif_to_ofport,
                                            &new_localvif_to_ofport);
+    // TODO: maybe this is not needed any more?
     if (physical_map_changed) {
         /* Reprocess logical flow table immediately. */
         poll_immediate_wake();

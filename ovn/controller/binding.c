@@ -580,13 +580,72 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     hmap_destroy(&qos_map);
 }
 
+static bool
+is_our_chassis(const struct chassis_index *chassis_index,
+                        struct sset *active_tunnels,
+                        const struct sbrec_chassis *chassis_rec,
+                        const struct sbrec_port_binding *binding_rec,
+                        struct shash *lport_to_iface,
+                        struct sset *local_lports)
+{
+    const struct ovsrec_interface *iface_rec
+        = shash_find_data(lport_to_iface, binding_rec->logical_port);
+    struct ovs_list *gateway_chassis = NULL;
+
+    bool our_chassis = false;
+    if (iface_rec
+        || (binding_rec->parent_port && binding_rec->parent_port[0] &&
+            sset_contains(local_lports, binding_rec->parent_port))) {
+        /* This port is in our chassis unless it is a localport. */
+        if (strcmp(binding_rec->type, "localport")) {
+            our_chassis = true;
+        }
+    } else if (!strcmp(binding_rec->type, "l2gateway")) {
+        const char *chassis_id = smap_get(&binding_rec->options,
+                                          "l2gateway-chassis");
+        our_chassis = chassis_id && !strcmp(chassis_id, chassis_rec->name);
+    } else if (!strcmp(binding_rec->type, "chassisredirect")) {
+        gateway_chassis = gateway_chassis_get_ordered(binding_rec,
+                                                       chassis_index);
+        if (gateway_chassis &&
+            gateway_chassis_contains(gateway_chassis, chassis_rec)) {
+
+            our_chassis = gateway_chassis_is_active(
+                gateway_chassis, chassis_rec, active_tunnels);
+
+        }
+        gateway_chassis_destroy(gateway_chassis);
+    } else if (!strcmp(binding_rec->type, "l3gateway")) {
+        const char *chassis_id = smap_get(&binding_rec->options,
+                                          "l3gateway-chassis");
+        our_chassis = chassis_id && !strcmp(chassis_id, chassis_rec->name);
+    } else if (!strcmp(binding_rec->type, "localnet")) {
+        our_chassis = false;
+    }
+
+    return our_chassis;
+}
+
 /* Check if port_binding changes are impacting */
 bool
 binding_evaluate_port_binding_changes(
-            struct controller_ctx *ctx,
-            const struct sbrec_chassis *chassis_rec)
+            struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
+            const struct sbrec_chassis *chassis_rec,
+            const struct chassis_index *chassis_index,
+            struct sset *active_tunnels,
+            struct sset *local_lports)
 {
+    if (!chassis_rec) {
+        return true;
+    }
+
     const struct sbrec_port_binding *binding_rec;
+    struct shash lport_to_iface = SHASH_INITIALIZER(&lport_to_iface);
+    struct sset egress_ifaces = SSET_INITIALIZER(&egress_ifaces);
+    if (br_int) {
+        get_local_iface_ids(br_int, &lport_to_iface, local_lports,
+                            &egress_ifaces);
+    }
     SBREC_PORT_BINDING_FOR_EACH_TRACKED(binding_rec, ctx->ovnsb_idl) {
         if (sbrec_port_binding_is_deleted(binding_rec) ||
                 sbrec_port_binding_is_new(binding_rec)) {
@@ -594,6 +653,12 @@ binding_evaluate_port_binding_changes(
                 return true;
             }
             if (!strcmp(binding_rec->type, "patch")) {
+                return true;
+            }
+            if (is_our_chassis(chassis_index,
+                                active_tunnels, chassis_rec, binding_rec,
+                                &lport_to_iface,
+                                local_lports)) {
                 return true;
             }
         } else {
