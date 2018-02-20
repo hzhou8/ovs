@@ -659,6 +659,97 @@ binding_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
     hmap_destroy(&qos_map);
 }
 
+static bool
+is_our_chassis(struct ovsdb_idl_index *sbrec_chassis_by_name,
+               const struct sbrec_chassis *chassis_rec,
+               const struct sbrec_port_binding *binding_rec,
+               const struct sset *active_tunnels,
+               const struct shash *lport_to_iface,
+               const struct sset *local_lports)
+{
+    const struct ovsrec_interface *iface_rec
+        = shash_find_data(lport_to_iface, binding_rec->logical_port);
+    struct ovs_list *gateway_chassis = NULL;
+
+    bool our_chassis = false;
+    if (iface_rec
+        || (binding_rec->parent_port && binding_rec->parent_port[0] &&
+            sset_contains(local_lports, binding_rec->parent_port))) {
+        /* This port is in our chassis unless it is a localport. */
+        if (strcmp(binding_rec->type, "localport")) {
+            our_chassis = true;
+        }
+    } else if (!strcmp(binding_rec->type, "l2gateway")) {
+        const char *chassis_id = smap_get(&binding_rec->options,
+                                          "l2gateway-chassis");
+        our_chassis = chassis_id && !strcmp(chassis_id, chassis_rec->name);
+    } else if (!strcmp(binding_rec->type, "chassisredirect")) {
+        gateway_chassis = gateway_chassis_get_ordered(sbrec_chassis_by_name,
+                                                      binding_rec);
+        if (gateway_chassis &&
+            gateway_chassis_contains(gateway_chassis, chassis_rec)) {
+
+            our_chassis = gateway_chassis_is_active(
+                gateway_chassis, chassis_rec, active_tunnels);
+
+        }
+        gateway_chassis_destroy(gateway_chassis);
+    } else if (!strcmp(binding_rec->type, "l3gateway")) {
+        const char *chassis_id = smap_get(&binding_rec->options,
+                                          "l3gateway-chassis");
+        our_chassis = chassis_id && !strcmp(chassis_id, chassis_rec->name);
+    } else if (!strcmp(binding_rec->type, "localnet")) {
+        our_chassis = false;
+    }
+
+    return our_chassis;
+}
+
+/* Returns true if port-binding changes potentially require flow changes on
+ * the current chassis. Returns false if we are sure there is no impact. */
+bool
+binding_evaluate_port_binding_changes(
+        struct ovsdb_idl_index *sbrec_chassis_by_name,
+        const struct sbrec_port_binding_table *pb_table,
+        const struct ovsrec_bridge *br_int,
+        const struct sbrec_chassis *chassis_rec,
+        struct sset *active_tunnels,
+        struct sset *local_lports)
+{
+    if (!chassis_rec) {
+        return true;
+    }
+
+    const struct sbrec_port_binding *binding_rec;
+    struct shash lport_to_iface = SHASH_INITIALIZER(&lport_to_iface);
+    struct sset egress_ifaces = SSET_INITIALIZER(&egress_ifaces);
+    if (br_int) {
+        get_local_iface_ids(br_int, &lport_to_iface, local_lports,
+                            &egress_ifaces);
+    }
+    SBREC_PORT_BINDING_TABLE_FOR_EACH_TRACKED (binding_rec, pb_table) {
+        /* XXX: currently OVSDB change tracking doesn't support getting old
+         * data when the operation is update, so if a port-binding moved from
+         * this chassis to another, we would not know it with this check.
+         * However, if the port is unbound from this chassis, the local ovsdb
+         * interface table will be updated, which will trigger recompute.
+         * If the port is still bound on this chassis, then below check
+         * is_our_chassis() will take care of that case. */
+        if (binding_rec->chassis == chassis_rec) {
+            return true;
+        }
+        if (is_our_chassis(sbrec_chassis_by_name, chassis_rec, binding_rec,
+                           active_tunnels, &lport_to_iface, local_lports)
+            || !strcmp(binding_rec->type, "patch")
+            || !strcmp(binding_rec->type, "localport")
+            || !strcmp(binding_rec->type, "vtep")
+            || !strcmp(binding_rec->type, "localnet")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Returns true if the database is all cleaned up, false if more work is
  * required. */
 bool
