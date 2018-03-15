@@ -73,15 +73,32 @@ get_cms_options(const struct smap *ext_ids)
     return smap_get_def(ext_ids, "ovn-cms-options", "");
 }
 
+static const struct sbrec_chassis_nb_cfg *
+find_chassis_nb_cfg(struct ovsdb_idl *ovnsb_idl, const char *chassis_id)
+{
+    const struct sbrec_chassis_nb_cfg *chassis_nb_cfg_rec;
+
+    SBREC_CHASSIS_NB_CFG_FOR_EACH(chassis_nb_cfg_rec, ovnsb_idl) {
+        if (!strcmp(chassis_nb_cfg_rec->chassis_name, chassis_id)) {
+            break;
+        }
+    }
+
+    return chassis_nb_cfg_rec;
+}
+
 /* Returns this chassis's Chassis record, if it is available and is currently
  * amenable to a transaction. */
 const struct sbrec_chassis *
-chassis_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
+chassis_run(struct ovsdb_idl *ovnsb_idl,
+            struct ovsdb_idl_txn *ovnsb_idl_txn,
             struct ovsdb_idl_index *sbrec_chassis_by_name,
             const struct ovsrec_open_vswitch_table *ovs_table,
             const char *chassis_id,
-            const struct ovsrec_bridge *br_int)
+            const struct ovsrec_bridge *br_int,
+            const struct sbrec_chassis_nb_cfg **nb_cfg)
 {
+    *nb_cfg = NULL;
     if (!ovnsb_idl_txn) {
         return NULL;
     }
@@ -138,6 +155,14 @@ chassis_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
     }
     ds_chomp(&iface_types, ',');
     const char *iface_types_str = ds_cstr(&iface_types);
+
+    const struct sbrec_chassis_nb_cfg *chassis_nb_cfg_rec
+        = find_chassis_nb_cfg(ovnsb_idl, chassis_id);
+    if (!chassis_nb_cfg_rec) {
+        chassis_nb_cfg_rec = sbrec_chassis_nb_cfg_insert(ovnsb_idl_txn);
+        sbrec_chassis_nb_cfg_set_chassis_name(chassis_nb_cfg_rec, chassis_id);
+    }
+    *nb_cfg = chassis_nb_cfg_rec;
 
     const struct sbrec_chassis *chassis_rec
         = chassis_lookup_by_name(sbrec_chassis_by_name, chassis_id);
@@ -249,7 +274,8 @@ chassis_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
 /* Returns true if the database is all cleaned up, false if more work is
  * required. */
 bool
-chassis_cleanup(struct ovsdb_idl_txn *ovnsb_idl_txn,
+chassis_cleanup(struct ovsdb_idl *ovnsb_idl,
+                struct ovsdb_idl_txn *ovnsb_idl_txn,
                 const struct sbrec_chassis *chassis_rec)
 {
     if (!chassis_rec) {
@@ -260,6 +286,14 @@ chassis_cleanup(struct ovsdb_idl_txn *ovnsb_idl_txn,
                                   "ovn-controller: unregistering chassis '%s'",
                                   chassis_rec->name);
         sbrec_chassis_delete(chassis_rec);
+        const struct sbrec_chassis_nb_cfg *chassis_nb_cfg_rec
+            = find_chassis_nb_cfg(ovnsb_idl, chassis_rec->name);
+        if (chassis_nb_cfg_rec) {
+            sbrec_chassis_nb_cfg_delete(chassis_nb_cfg_rec);
+        } else {
+            VLOG_WARN("Chassis_NB_Cfg record didn't exist for chassis '%s'",
+                      chassis_rec->name);
+        }
     }
     return false;
 }
