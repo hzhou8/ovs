@@ -143,6 +143,7 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
     struct ovsdb_idl_condition mb = OVSDB_IDL_CONDITION_INIT(&mb);
     struct ovsdb_idl_condition mg = OVSDB_IDL_CONDITION_INIT(&mg);
     struct ovsdb_idl_condition dns = OVSDB_IDL_CONDITION_INIT(&dns);
+    struct ovsdb_idl_condition nbcfg = OVSDB_IDL_CONDITION_INIT(&nbcfg);
     sbrec_port_binding_add_clause_type(&pb, OVSDB_F_EQ, "patch");
     /* XXX: We can optimize this, if we find a way to only monitor
      * ports that have a Gateway_Chassis that point's to our own
@@ -165,6 +166,12 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
         sbrec_port_binding_add_clause_options(&pb, OVSDB_F_INCLUDES, &l2);
         const struct smap l3 = SMAP_CONST1(&l3, "l3gateway-chassis", id);
         sbrec_port_binding_add_clause_options(&pb, OVSDB_F_INCLUDES, &l3);
+
+        /* Monitors Chassis_NB_Cfg record for current chassis only */
+        sbrec_chassis_nb_cfg_add_clause_chassis_name(&nbcfg, OVSDB_F_EQ,
+                                                     chassis->name);
+    } else {
+        ovsdb_idl_condition_add_clause_true(&nbcfg);
     }
     if (local_ifaces) {
         const char *name;
@@ -191,11 +198,13 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
     sbrec_mac_binding_set_condition(ovnsb_idl, &mb);
     sbrec_multicast_group_set_condition(ovnsb_idl, &mg);
     sbrec_dns_set_condition(ovnsb_idl, &dns);
+    sbrec_chassis_nb_cfg_set_condition(ovnsb_idl, &nbcfg);
     ovsdb_idl_condition_destroy(&pb);
     ovsdb_idl_condition_destroy(&lf);
     ovsdb_idl_condition_destroy(&mb);
     ovsdb_idl_condition_destroy(&mg);
     ovsdb_idl_condition_destroy(&dns);
+    ovsdb_idl_condition_destroy(&nbcfg);
 }
 
 static const struct ovsrec_bridge *
@@ -630,7 +639,7 @@ main(int argc, char *argv[])
                                   &sbrec_mac_binding_col_logical_port,
                                   &sbrec_mac_binding_col_ip);
 
-    ovsdb_idl_omit_alert(ovnsb_idl_loop.idl, &sbrec_chassis_col_nb_cfg);
+    ovsdb_idl_omit_alert(ovnsb_idl_loop.idl, &sbrec_chassis_nb_cfg_col_nb_cfg);
     update_sb_monitors(ovnsb_idl_loop.idl, NULL, NULL, NULL);
     ovsdb_idl_get_initial_snapshot(ovnsb_idl_loop.idl);
 
@@ -696,10 +705,12 @@ main(int argc, char *argv[])
             = get_chassis_id(ovsrec_open_vswitch_table_get(ovs_idl_loop.idl));
 
         const struct sbrec_chassis *chassis = NULL;
+        const struct sbrec_chassis_nb_cfg *chassis_nb_cfg = NULL;
         if (chassis_id) {
             chassis = chassis_run(ovnsb_idl_txn, sbrec_chassis_by_name,
+                                  sbrec_chassis_nb_cfg_table_get(ovnsb_idl_loop.idl),
                                   ovsrec_open_vswitch_table_get(ovs_idl_loop.idl),
-                                  chassis_id, br_int);
+                                  chassis_id, br_int, &chassis_nb_cfg);
             encaps_run(ovs_idl_txn,
                        ovsrec_bridge_table_get(ovs_idl_loop.idl), br_int,
                        sbrec_chassis_table_get(ovnsb_idl_loop.idl), chassis_id);
@@ -791,10 +802,11 @@ main(int argc, char *argv[])
 
                     hmap_destroy(&flow_table);
                 }
-                if (ovnsb_idl_txn) {
+                if (ovnsb_idl_txn && chassis_nb_cfg) {
                     int64_t cur_cfg = ofctrl_get_cur_cfg();
-                    if (cur_cfg && cur_cfg != chassis->nb_cfg) {
-                        sbrec_chassis_set_nb_cfg(chassis, cur_cfg);
+                    if (cur_cfg && cur_cfg != chassis_nb_cfg->nb_cfg) {
+                        sbrec_chassis_nb_cfg_set_nb_cfg(chassis_nb_cfg,
+                                                        cur_cfg);
                     }
                 }
             }
@@ -901,7 +913,8 @@ main(int argc, char *argv[])
             /* Run all of the cleanup functions, even if one of them returns
              * false. We're done if all of them return true. */
             done = binding_cleanup(ovnsb_idl_txn, port_binding_table, chassis);
-            done = chassis_cleanup(ovnsb_idl_txn, chassis) && done;
+            done = chassis_cleanup(ovnsb_idl_txn, chassis,
+                    sbrec_chassis_nb_cfg_table_get(ovnsb_idl_loop.idl)) && done;
             done = encaps_cleanup(ovs_idl_txn, br_int) && done;
             if (done) {
                 poll_immediate_wake();

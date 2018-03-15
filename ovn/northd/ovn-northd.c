@@ -7296,6 +7296,11 @@ static const char *rbac_chassis_auth[] =
 static const char *rbac_chassis_update[] =
     {"nb_cfg", "external_ids", "encaps", "vtep_logical_switches"};
 
+static const char *rbac_chassis_nb_cfg_auth[] =
+    {"chassis_name"};
+static const char *rbac_chassis_nb_cfg_update[] =
+    {"nb_cfg"};
+
 static const char *rbac_encap_auth[] =
     {"chassis_name"};
 static const char *rbac_encap_update[] =
@@ -7327,6 +7332,14 @@ static struct rbac_perm_cfg {
         .insdel = true,
         .update = rbac_chassis_update,
         .n_update = ARRAY_SIZE(rbac_chassis_update),
+        .row = NULL
+    },{
+        .table = "Chassis_NB_Cfg",
+        .auth = rbac_chassis_nb_cfg_auth,
+        .n_auth = ARRAY_SIZE(rbac_chassis_nb_cfg_auth),
+        .insdel = true,
+        .update = rbac_chassis_nb_cfg_update,
+        .n_update = ARRAY_SIZE(rbac_chassis_nb_cfg_update),
         .row = NULL
     },{
         .table = "Encap",
@@ -7489,9 +7502,9 @@ update_northbound_cfg(struct northd_context *ctx,
     /* Update northbound hv_cfg if appropriate. */
     if (nbg) {
         /* Find minimum nb_cfg among all chassis. */
-        const struct sbrec_chassis *chassis;
+        const struct sbrec_chassis_nb_cfg *chassis;
         int64_t hv_cfg = nbg->nb_cfg;
-        SBREC_CHASSIS_FOR_EACH (chassis, ctx->ovnsb_idl) {
+        SBREC_CHASSIS_NB_CFG_FOR_EACH (chassis, ctx->ovnsb_idl) {
             if (chassis->nb_cfg < hv_cfg) {
                 hv_cfg = chassis->nb_cfg;
             }
@@ -7737,11 +7750,12 @@ main(int argc, char *argv[])
     ovsdb_idl_add_column(ovnsb_idl_loop.idl, &sbrec_meter_band_col_burst_size);
 
     ovsdb_idl_add_table(ovnsb_idl_loop.idl, &sbrec_table_chassis);
-    ovsdb_idl_add_column(ovnsb_idl_loop.idl, &sbrec_chassis_col_nb_cfg);
     ovsdb_idl_add_column(ovnsb_idl_loop.idl, &sbrec_chassis_col_name);
 
     struct ovsdb_idl_index *sbrec_chassis_by_name
         = chassis_index_create(ovnsb_idl_loop.idl);
+    ovsdb_idl_add_table(ovnsb_idl_loop.idl, &sbrec_table_chassis_nb_cfg);
+    ovsdb_idl_add_column(ovnsb_idl_loop.idl, &sbrec_chassis_nb_cfg_col_nb_cfg);
 
     /* Ensure that only a single ovn-northd is active in the deployment by
      * acquiring a lock called "ovn_northd" on the southbound database
