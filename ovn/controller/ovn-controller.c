@@ -150,6 +150,7 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
     struct ovsdb_idl_condition mb = OVSDB_IDL_CONDITION_INIT(&mb);
     struct ovsdb_idl_condition mg = OVSDB_IDL_CONDITION_INIT(&mg);
     struct ovsdb_idl_condition dns = OVSDB_IDL_CONDITION_INIT(&dns);
+    struct ovsdb_idl_condition nbcfg = OVSDB_IDL_CONDITION_INIT(&nbcfg);
     sbrec_port_binding_add_clause_type(&pb, OVSDB_F_EQ, "patch");
     /* XXX: We can optimize this, if we find a way to only monitor
      * ports that have a Gateway_Chassis that point's to our own
@@ -172,6 +173,10 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
         sbrec_port_binding_add_clause_options(&pb, OVSDB_F_INCLUDES, &l2);
         const struct smap l3 = SMAP_CONST1(&l3, "l3gateway-chassis", id);
         sbrec_port_binding_add_clause_options(&pb, OVSDB_F_INCLUDES, &l3);
+
+        /* Monitors Chassis_NB_Cfg record for current chassis only */
+        sbrec_chassis_nb_cfg_add_clause_chassis_name(&nbcfg, OVSDB_F_EQ,
+                                                     chassis->name);
     }
     if (local_ifaces) {
         const char *name;
@@ -198,11 +203,13 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
     sbrec_mac_binding_set_condition(ovnsb_idl, &mb);
     sbrec_multicast_group_set_condition(ovnsb_idl, &mg);
     sbrec_dns_set_condition(ovnsb_idl, &dns);
+    sbrec_chassis_nb_cfg_set_condition(ovnsb_idl, &nbcfg);
     ovsdb_idl_condition_destroy(&pb);
     ovsdb_idl_condition_destroy(&lf);
     ovsdb_idl_condition_destroy(&mb);
     ovsdb_idl_condition_destroy(&mg);
     ovsdb_idl_condition_destroy(&dns);
+    ovsdb_idl_condition_destroy(&nbcfg);
 }
 
 static const struct ovsrec_bridge *
@@ -621,7 +628,7 @@ main(int argc, char *argv[])
     create_ovnsb_indexes(ovnsb_idl_loop.idl);
     lport_init(ovnsb_idl_loop.idl);
 
-    ovsdb_idl_omit_alert(ovnsb_idl_loop.idl, &sbrec_chassis_col_nb_cfg);
+    ovsdb_idl_omit_alert(ovnsb_idl_loop.idl, &sbrec_chassis_nb_cfg_col_nb_cfg);
     update_sb_monitors(ovnsb_idl_loop.idl, NULL, NULL, NULL);
     ovsdb_idl_get_initial_snapshot(ovnsb_idl_loop.idl);
 
@@ -685,8 +692,9 @@ main(int argc, char *argv[])
         chassis_index_init(&chassis_index, ctx.ovnsb_idl);
 
         const struct sbrec_chassis *chassis = NULL;
+        const struct sbrec_chassis_nb_cfg *chassis_nb_cfg = NULL;
         if (chassis_id) {
-            chassis = chassis_run(&ctx, chassis_id, br_int);
+            chassis = chassis_run(&ctx, chassis_id, br_int, &chassis_nb_cfg);
             encaps_run(&ctx, br_int, chassis_id);
             bfd_calculate_active_tunnels(br_int, &active_tunnels);
             binding_run(&ctx, br_int, chassis,
@@ -730,10 +738,11 @@ main(int argc, char *argv[])
 
                     hmap_destroy(&flow_table);
                 }
-                if (ctx.ovnsb_idl_txn) {
+                if (ctx.ovnsb_idl_txn && chassis_nb_cfg) {
                     int64_t cur_cfg = ofctrl_get_cur_cfg();
-                    if (cur_cfg && cur_cfg != chassis->nb_cfg) {
-                        sbrec_chassis_set_nb_cfg(chassis, cur_cfg);
+                    if (cur_cfg && cur_cfg != chassis_nb_cfg->nb_cfg) {
+                        sbrec_chassis_nb_cfg_set_nb_cfg(chassis_nb_cfg,
+                                                        cur_cfg);
                     }
                 }
             }

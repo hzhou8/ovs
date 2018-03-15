@@ -72,12 +72,28 @@ get_cms_options(const struct smap *ext_ids)
     return smap_get_def(ext_ids, "ovn-cms-options", "");
 }
 
+static const struct sbrec_chassis_nb_cfg *
+find_chassis_nb_cfg(struct ovsdb_idl *ovnsb_idl, const char *chassis_id)
+{
+    const struct sbrec_chassis_nb_cfg *chassis_nb_cfg_rec;
+
+    SBREC_CHASSIS_NB_CFG_FOR_EACH (chassis_nb_cfg_rec, ovnsb_idl) {
+        if (!strcmp(chassis_nb_cfg_rec->chassis_name, chassis_id)) {
+            break;
+        }
+    }
+
+    return chassis_nb_cfg_rec;
+}
+
 /* Returns this chassis's Chassis record, if it is available and is currently
  * amenable to a transaction. */
 const struct sbrec_chassis *
 chassis_run(struct controller_ctx *ctx, const char *chassis_id,
-            const struct ovsrec_bridge *br_int)
+            const struct ovsrec_bridge *br_int,
+            const struct sbrec_chassis_nb_cfg **nb_cfg)
 {
+    *nb_cfg = NULL;
     if (!ctx->ovnsb_idl_txn) {
         return NULL;
     }
@@ -135,8 +151,17 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
     ds_chomp(&iface_types, ',');
     const char *iface_types_str = ds_cstr(&iface_types);
 
+    const struct sbrec_chassis_nb_cfg *chassis_nb_cfg_rec
+        = find_chassis_nb_cfg(ctx->ovnsb_idl, chassis_id);
+    if (!chassis_nb_cfg_rec) {
+        chassis_nb_cfg_rec = sbrec_chassis_nb_cfg_insert(ctx->ovnsb_idl_txn);
+        sbrec_chassis_nb_cfg_set_chassis_name(chassis_nb_cfg_rec, chassis_id);
+    }
+    *nb_cfg = chassis_nb_cfg_rec;
+
     const struct sbrec_chassis *chassis_rec
         = get_chassis(ctx->ovnsb_idl, chassis_id);
+
     const char *encap_csum = smap_get_def(&cfg->external_ids,
                                           "ovn-encap-csum", "true");
     if (chassis_rec) {
@@ -256,6 +281,14 @@ chassis_cleanup(struct controller_ctx *ctx,
                                   "ovn-controller: unregistering chassis '%s'",
                                   chassis_rec->name);
         sbrec_chassis_delete(chassis_rec);
+        const struct sbrec_chassis_nb_cfg *chassis_nb_cfg_rec
+            = find_chassis_nb_cfg(ctx->ovnsb_idl, chassis_rec->name);
+        if (chassis_nb_cfg_rec) {
+            sbrec_chassis_nb_cfg_delete(chassis_nb_cfg_rec);
+        } else {
+            VLOG_WARN("Chassis_NB_Cfg record didn't exist for chassis '%s'",
+                      chassis_rec->name);
+        }
     }
     return false;
 }
