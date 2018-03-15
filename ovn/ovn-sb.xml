@@ -212,10 +212,8 @@
     </column>
 
     <column name="nb_cfg">
-      Sequence number for the configuration.  When <code>ovn-controller</code>
-      updates the configuration of a chassis from the contents of the
-      southbound database, it copies <ref table="SB_Global" column="nb_cfg"/>
-      from the <ref table="SB_Global"/> table into this column.
+      Deprecated. This column is replaced by the <ref table="Chassis_NB_Cfg"
+      column="nb_cfg"/> column of the <ref table="Chassis_NB_Cfg"/> table.
     </column>
 
     <column name="external_ids" key="ovn-bridge-mappings">
@@ -289,6 +287,26 @@
         associated with this <ref table="Chassis"/>.
       </column>
     </group>
+  </table>
+
+  <table name="Chassis_NB_Cfg" title="Chassis NB Config">
+    <p>
+      Each row in this table maintains the nb_cfg number that the corresponding
+      chassis with <ref table="Chassis" column="name"/> in <ref table="Chassis"/>
+      has processed. This information is stored in this separate table for
+      performance considerations.
+    </p>
+
+    <column name="nb_cfg">
+      Sequence number for the configuration.  When <code>ovn-controller</code>
+      updates the configuration of a chassis from the contents of the
+      southbound database, it copies <ref table="SB_Global" column="nb_cfg"/>
+      from the <ref table="SB_Global"/> table into this column.
+    </column>
+
+    <column name="chassis_name">
+      The name of the chassis that created this encap.
+    </column>
   </table>
 
   <table name="Encap" title="Encapsulation Types">
