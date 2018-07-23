@@ -54,6 +54,6 @@ void physical_run(struct ovsdb_idl_index *sbrec_chassis_by_name,
                   const struct hmap *local_datapaths,
                   const struct sset *local_lports,
                   const struct sset *active_tunnels,
-                  struct hmap *flow_table);
+                  struct ovn_desired_flow_table *);
 
 #endif /* ovn/physical.h */
