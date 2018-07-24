@@ -588,6 +588,52 @@ enum ovs_engine_node {
     OVS_NODES
 #undef OVS_NODE
 
+struct ed_type_addr_sets {
+    struct shash addr_sets;
+    struct sset new;
+    struct sset deleted;
+    struct sset updated;
+};
+
+static void
+en_addr_sets_init(struct engine_node *node)
+{
+    struct ed_type_addr_sets *as = (struct ed_type_addr_sets *)node->data;
+    shash_init(&as->addr_sets);
+    sset_init(&as->new);
+    sset_init(&as->deleted);
+    sset_init(&as->updated);
+}
+
+static void
+en_addr_sets_cleanup(struct engine_node *node)
+{
+    struct ed_type_addr_sets *as = (struct ed_type_addr_sets *)node->data;
+    expr_const_sets_destroy(&as->addr_sets);
+    shash_destroy(&as->addr_sets);
+    sset_destroy(&as->new);
+    sset_destroy(&as->deleted);
+    sset_destroy(&as->updated);
+}
+
+static void
+en_addr_sets_run(struct engine_node *node)
+{
+    struct ed_type_addr_sets *as = (struct ed_type_addr_sets *)node->data;
+
+    sset_clear(&as->new);
+    sset_clear(&as->deleted);
+    sset_clear(&as->updated);
+    expr_const_sets_destroy(&as->addr_sets);
+
+    struct sbrec_address_set_table *as_table =
+        (struct sbrec_address_set_table *)EN_OVSDB_GET(
+            engine_get_input("SB_address_set", node));
+
+    addr_sets_init(as_table, &as->addr_sets);
+
+    node->changed = true;
+}
 
 struct ed_type_runtime_data {
     /* Contains "struct local_datapath" nodes. */
@@ -604,7 +650,6 @@ struct ed_type_runtime_data {
      * <datapath-tunnel-key>_<port-tunnel-key> */
     struct sset local_lport_ids;
     struct sset active_tunnels;
-    struct shash addr_sets;
     struct shash port_groups;
 
     /* connection tracking zones. */
@@ -628,7 +673,6 @@ en_runtime_data_init(struct engine_node *node)
     sset_init(&data->local_lports);
     sset_init(&data->local_lport_ids);
     sset_init(&data->active_tunnels);
-    shash_init(&data->addr_sets);
     shash_init(&data->port_groups);
     shash_init(&data->pending_ct_zones);
     simap_init(&data->ct_zones);
@@ -646,8 +690,6 @@ en_runtime_data_cleanup(struct engine_node *node)
     struct ed_type_runtime_data *data =
         (struct ed_type_runtime_data *)node->data;
 
-    expr_const_sets_destroy(&data->addr_sets);
-    shash_destroy(&data->addr_sets);
     expr_const_sets_destroy(&data->port_groups);
     shash_destroy(&data->port_groups);
 
@@ -676,7 +718,6 @@ en_runtime_data_run(struct engine_node *node)
     struct sset *local_lports = &data->local_lports;
     struct sset *local_lport_ids = &data->local_lport_ids;
     struct sset *active_tunnels = &data->active_tunnels;
-    struct shash *addr_sets = &data->addr_sets;
     struct shash *port_groups = &data->port_groups;
     unsigned long *ct_zone_bitmap = data->ct_zone_bitmap;
     struct shash *pending_ct_zones = &data->pending_ct_zones;
@@ -697,7 +738,6 @@ en_runtime_data_run(struct engine_node *node)
         sset_destroy(local_lports);
         sset_destroy(local_lport_ids);
         sset_destroy(active_tunnels);
-        expr_const_sets_destroy(addr_sets);
         expr_const_sets_destroy(port_groups);
         sset_init(local_lports);
         sset_init(local_lport_ids);
@@ -763,11 +803,6 @@ en_runtime_data_run(struct engine_node *node)
                 br_int, chassis,
                 active_tunnels, local_datapaths,
                 local_lports, local_lport_ids);
-
-    struct sbrec_address_set_table *as_table =
-        (struct sbrec_address_set_table *)EN_OVSDB_GET(
-            engine_get_input("SB_address_set", node));
-    addr_sets_init(as_table, addr_sets);
 
     struct sbrec_port_group_table *pg_table =
         (struct sbrec_port_group_table *)EN_OVSDB_GET(
@@ -893,7 +928,6 @@ en_flow_output_run(struct engine_node *node)
     struct sset *local_lports = &rt_data->local_lports;
     struct sset *local_lport_ids = &rt_data->local_lport_ids;
     struct sset *active_tunnels = &rt_data->active_tunnels;
-    struct shash *addr_sets = &rt_data->addr_sets;
     struct shash *port_groups = &rt_data->port_groups;
     struct simap *ct_zones = &rt_data->ct_zones;
 
@@ -915,6 +949,10 @@ en_flow_output_run(struct engine_node *node)
         engine_ovsdb_node_get_index(
                 engine_get_input("SB_chassis", node),
                 "name");
+    struct ed_type_addr_sets *as_data =
+        (struct ed_type_addr_sets *)engine_get_input("addr_sets", node)->data;
+    struct shash *addr_sets = &as_data->addr_sets;
+
     const struct sbrec_chassis *chassis = NULL;
     if (chassis_id) {
         chassis = chassis_lookup_by_name(sbrec_chassis_by_name, chassis_id);
@@ -1006,8 +1044,10 @@ flow_output_sb_logical_flow_handler(struct engine_node *node)
     struct hmap *local_datapaths = &data->local_datapaths;
     struct sset *local_lport_ids = &data->local_lport_ids;
     struct sset *active_tunnels = &data->active_tunnels;
-    struct shash *addr_sets = &data->addr_sets;
     struct shash *port_groups = &data->port_groups;
+    struct ed_type_addr_sets *as_data =
+        (struct ed_type_addr_sets *)engine_get_input("addr_sets", node)->data;
+    struct shash *addr_sets = &as_data->addr_sets;
 
     struct ovsrec_open_vswitch_table *ovs_table =
         (struct ovsrec_open_vswitch_table *)EN_OVSDB_GET(
@@ -1300,10 +1340,12 @@ main(int argc, char *argv[])
     struct ed_type_runtime_data ed_runtime_data;
     struct ed_type_mff_ovn_geneve ed_mff_ovn_geneve;
     struct ed_type_flow_output ed_flow_output;
+    struct ed_type_addr_sets ed_addr_sets;
 
     ENGINE_NODE(runtime_data, "runtime_data");
     ENGINE_NODE(mff_ovn_geneve, "mff_ovn_geneve");
     ENGINE_NODE(flow_output, "flow_output");
+    ENGINE_NODE(addr_sets, "addr_sets");
 
 #define SB_NODE(NAME, NAME_STR) ENGINE_NODE_SB(NAME, NAME_STR);
     SB_NODES
@@ -1321,6 +1363,10 @@ main(int argc, char *argv[])
     engine_ovsdb_node_add_index(&en_sb_datapath_binding, "key", sbrec_datapath_binding_by_key);
 
     /* Add dependencies between inc-proc-engine nodes. */
+
+    engine_add_input(&en_addr_sets, &en_sb_address_set, NULL);
+
+    engine_add_input(&en_flow_output, &en_addr_sets, NULL);
     engine_add_input(&en_flow_output, &en_runtime_data, NULL);
     engine_add_input(&en_flow_output, &en_mff_ovn_geneve, NULL);
 
@@ -1348,7 +1394,6 @@ main(int argc, char *argv[])
     engine_add_input(&en_runtime_data, &en_ovs_interface, NULL);
 
     engine_add_input(&en_runtime_data, &en_sb_chassis, NULL);
-    engine_add_input(&en_runtime_data, &en_sb_address_set, NULL);
     engine_add_input(&en_runtime_data, &en_sb_port_group, NULL);
     engine_add_input(&en_runtime_data, &en_sb_datapath_binding, NULL);
     engine_add_input(&en_runtime_data, &en_sb_port_binding, runtime_data_sb_port_binding_handler);
@@ -1521,7 +1566,7 @@ main(int argc, char *argv[])
             if (br_int && chassis) {
                 char *error = ofctrl_inject_pkt(br_int, pending_pkt.flow_s,
                                                 &ed_runtime_data.port_groups,
-                                                &ed_runtime_data.addr_sets);
+                                                &ed_addr_sets.addr_sets);
                 if (error) {
                     unixctl_command_reply_error(pending_pkt.conn, error);
                     free(error);
