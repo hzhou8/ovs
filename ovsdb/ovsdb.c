@@ -455,6 +455,9 @@ ovsdb_destroy(struct ovsdb *db)
         /* Remove all the monitors. */
         ovsdb_monitors_remove(db);
 
+        /* Destroy txn history. */
+        ovsdb_txn_history_destroy(db);
+
         /* The caller must ensure that no triggers remain. */
         ovs_assert(ovs_list_is_empty(&db->triggers));
 
