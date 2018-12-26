@@ -144,6 +144,15 @@ struct hmap_node *hmap_random_node(const struct hmap *);
          (NODE != OBJECT_CONTAINING(NULL, NODE, MEMBER)) || (NODE = NULL); \
          ASSIGN_CONTAINER(NODE, hmap_next_in_bucket(&(NODE)->MEMBER), MEMBER))
 
+/* Safe when NODE may be freed (not needed when NODE may be removed from the
+ * hash map but its members remain accessible and intact). */
+#define HMAP_FOR_EACH_SAFE_WITH_HASH(NODE, NEXT, MEMBER, HASH, HMAP) \
+    for (INIT_CONTAINER(NODE, hmap_first_with_hash(HMAP, HASH), MEMBER); \
+         ((NODE != OBJECT_CONTAINING(NULL, NODE, MEMBER)) || (NODE = NULL) \
+          ? INIT_CONTAINER(NEXT, hmap_next_with_hash(&(NODE)->MEMBER), \
+                           MEMBER), 1 : 0); \
+         (NODE) = (NEXT))
+
 static inline struct hmap_node *hmap_first_with_hash(const struct hmap *,
                                                      size_t hash);
 static inline struct hmap_node *hmap_next_with_hash(const struct hmap_node *);
