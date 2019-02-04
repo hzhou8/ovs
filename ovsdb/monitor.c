@@ -491,7 +491,11 @@ ovsdb_monitor_table_add_changes(struct ovsdb_monitor_table *mt,
 
     changes->transaction = next_txn;
     changes->mt = mt;
-    changes->n_refs = 1;
+
+    /* next_txn means the changes start from initial, which should never be
+     * released until the monitor is destroyed, so set the n_refs = 2. */
+    changes->n_refs = next_txn ? 1 : 2;
+
     hmap_init(&changes->rows);
     hmap_insert(&mt->changes, &changes->hmap_node, hash_uint64(next_txn));
 
