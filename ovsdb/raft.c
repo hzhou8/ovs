@@ -251,7 +251,7 @@ struct raft {
     struct uuid leader_sid;     /* Server ID of leader (zero, if unknown). */
 
     /* Followers and candidates only. */
-#define ELECTION_BASE_MSEC 1024
+#define ELECTION_BASE_MSEC 10000
 #define ELECTION_RANGE_MSEC 1024
     long long int election_base;    /* Time of last heartbeat from leader. */
     long long int election_timeout; /* Time at which we start an election. */
