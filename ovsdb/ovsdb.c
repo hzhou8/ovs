@@ -517,10 +517,14 @@ ovsdb_snapshot(struct ovsdb *db)
         return NULL;
     }
 
+    VLOG_INFO("start snapshot");
     struct json *schema = ovsdb_schema_to_json(db->schema);
+    VLOG_INFO("schema snapshot done");
     struct json *data = ovsdb_to_txn_json(db, "compacting database online");
+    VLOG_INFO("data snapshot done");
     struct ovsdb_error *error = ovsdb_storage_store_snapshot(db->storage,
                                                              schema, data);
+    VLOG_INFO("store snapshot done");
     json_destroy(schema);
     json_destroy(data);
     return error;

@@ -3088,7 +3088,9 @@ raft_send_install_snapshot_request(struct raft *raft,
             .data = raft->snap.data,
         }
     };
+    VLOG_INFO("raft send install snapshot request");
     raft_send(raft, &rpc);
+    VLOG_INFO("raft done sending install snapshot request");
 }
 
 static void

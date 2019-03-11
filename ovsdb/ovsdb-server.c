@@ -239,6 +239,8 @@ main_loop(struct server_config *config,
                           xasprintf("removing database %s because storage "
                                     "disconnected permanently", node->name));
             } else if (ovsdb_storage_should_snapshot(db->db->storage)) {
+                VLOG_INFO("compacting %s database automatically",
+                          node->name);
                 log_and_free_error(ovsdb_snapshot(db->db));
             }
         }
