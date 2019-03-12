@@ -239,7 +239,7 @@ struct raft {
     struct uuid leader_sid;     /* Server ID of leader (zero, if unknown). */
 
     /* Followers and candidates only. */
-#define ELECTION_BASE_MSEC 1024
+#define ELECTION_BASE_MSEC 10000
 #define ELECTION_RANGE_MSEC 1024
     long long int election_base;    /* Time of last heartbeat from leader. */
     long long int election_timeout; /* Time at which we start an election. */
@@ -269,7 +269,7 @@ struct raft {
     struct hmap add_servers;    /* Contains "struct raft_server"s to add. */
     struct raft_server *remove_server; /* Server being removed. */
     struct hmap commands;       /* Contains "struct raft_command"s. */
-#define PING_TIME_MSEC (ELECTION_BASE_MSEC / 3)
+#define PING_TIME_MSEC 300
     long long int ping_timeout; /* Time at which to send a heartbeat */
 
     /* Candidates only.  Reinitialized at start of election. */
