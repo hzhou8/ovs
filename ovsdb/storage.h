@@ -26,6 +26,7 @@ struct ovsdb_storage;
 struct uuid;
 
 struct ovsdb_error *ovsdb_storage_open(const char *filename, bool rw,
+                                       unsigned int leader_timeout,
                                        struct ovsdb_storage **)
     OVS_WARN_UNUSED_RESULT;
 struct ovsdb_storage *ovsdb_storage_create_unbacked(void);

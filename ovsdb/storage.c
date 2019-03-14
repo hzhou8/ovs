@@ -58,6 +58,7 @@ static void schedule_next_snapshot(struct ovsdb_storage *, bool quick);
 
 static struct ovsdb_error * OVS_WARN_UNUSED_RESULT
 ovsdb_storage_open__(const char *filename, bool rw, bool allow_clustered,
+                     unsigned int leader_timeout,
                      struct ovsdb_storage **storagep)
 {
     *storagep = NULL;
@@ -78,7 +79,7 @@ ovsdb_storage_open__(const char *filename, bool rw, bool allow_clustered,
             return ovsdb_error(NULL, "%s: cannot apply this operation to "
                                "clustered database file", filename);
         }
-        error = raft_open(log, &raft);
+        error = raft_open(log, leader_timeout, &raft);
         log = NULL;
         if (error) {
             return error;
@@ -101,10 +102,10 @@ ovsdb_storage_open__(const char *filename, bool rw, bool allow_clustered,
  * The returned storage might be clustered or standalone, depending on what the
  * disk file contains. */
 struct ovsdb_error * OVS_WARN_UNUSED_RESULT
-ovsdb_storage_open(const char *filename, bool rw,
+ovsdb_storage_open(const char *filename, bool rw, unsigned int leader_timeout,
                    struct ovsdb_storage **storagep)
 {
-    return ovsdb_storage_open__(filename, rw, true, storagep);
+    return ovsdb_storage_open__(filename, rw, true, leader_timeout, storagep);
 }
 
 struct ovsdb_storage *
@@ -112,7 +113,7 @@ ovsdb_storage_open_standalone(const char *filename, bool rw)
 {
     struct ovsdb_storage *storage;
     struct ovsdb_error *error = ovsdb_storage_open__(filename, rw, false,
-                                                     &storage);
+                                                     0, &storage);
     if (error) {
         ovs_fatal(0, "%s", ovsdb_error_to_string_free(error));
     }

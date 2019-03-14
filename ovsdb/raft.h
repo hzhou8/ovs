@@ -100,7 +100,8 @@ struct ovsdb_error *raft_read_metadata(struct ovsdb_log *,
 void raft_metadata_destroy(struct raft_metadata *);
 
 /* Starting up or shutting down a server within a cluster. */
-struct ovsdb_error *raft_open(struct ovsdb_log *, struct raft **)
+struct ovsdb_error *raft_open(struct ovsdb_log *,
+                              unsigned int election_interval, struct raft **)
     OVS_WARN_UNUSED_RESULT;
 void raft_close(struct raft *);
 

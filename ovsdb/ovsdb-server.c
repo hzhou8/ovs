@@ -97,6 +97,7 @@ struct server_config {
     char **sync_from;
     char **sync_exclude;
     bool *is_backup;
+    unsigned int *leader_timeout;
     struct ovsdb_jsonrpc_server *jsonrpc;
 };
 static unixctl_cb_func ovsdb_server_add_remote;
@@ -119,7 +120,7 @@ static void parse_options(int argc, char *argvp[],
                           struct sset *db_filenames, struct sset *remotes,
                           char **unixctl_pathp, char **run_command,
                           char **sync_from, char **sync_exclude,
-                          bool *is_backup);
+                          bool *is_backup, unsigned int *leader_timeout);
 OVS_NO_RETURN static void usage(void);
 
 static char *reconfigure_remotes(struct ovsdb_jsonrpc_server *,
@@ -312,8 +313,10 @@ main(int argc, char *argv[])
     process_init();
 
     bool active = false;
+    unsigned int leader_timeout = 0;
     parse_options(argc, argv, &db_filenames, &remotes, &unixctl_path,
-                  &run_command, &sync_from, &sync_exclude, &active);
+                  &run_command, &sync_from, &sync_exclude, &active,
+                  &leader_timeout);
     is_backup = sync_from && !active;
 
     daemon_become_new_user(false);
@@ -351,6 +354,7 @@ main(int argc, char *argv[])
     server_config.sync_from = &sync_from;
     server_config.sync_exclude = &sync_exclude;
     server_config.is_backup = &is_backup;
+    server_config.leader_timeout = &leader_timeout;
 
     perf_counters_init();
 
@@ -639,7 +643,8 @@ open_db(struct server_config *config, const char *filename)
 
     struct ovsdb_storage *storage;
     struct ovsdb_error *error;
-    error = ovsdb_storage_open(filename, true, &storage);
+    error = ovsdb_storage_open(filename, true, *config->leader_timeout,
+                               &storage);
     if (error) {
         return error;
     }
@@ -1664,7 +1669,8 @@ static void
 parse_options(int argc, char *argv[],
               struct sset *db_filenames, struct sset *remotes,
               char **unixctl_pathp, char **run_command,
-              char **sync_from, char **sync_exclude, bool *active)
+              char **sync_from, char **sync_exclude, bool *active,
+              unsigned int *leader_timeout)
 {
     enum {
         OPT_REMOTE = UCHAR_MAX + 1,
@@ -1675,6 +1681,7 @@ parse_options(int argc, char *argv[],
         OPT_SYNC_FROM,
         OPT_SYNC_EXCLUDE,
         OPT_ACTIVE,
+        OPT_LEADER_TIMEOUT,
         OPT_NO_DBS,
         VLOG_OPTION_ENUMS,
         DAEMON_OPTION_ENUMS,
@@ -1697,6 +1704,7 @@ parse_options(int argc, char *argv[],
         {"sync-from",   required_argument, NULL, OPT_SYNC_FROM},
         {"sync-exclude-tables", required_argument, NULL, OPT_SYNC_EXCLUDE},
         {"active", no_argument, NULL, OPT_ACTIVE},
+        {"leader-timeout", required_argument, NULL, OPT_LEADER_TIMEOUT},
         {"no-dbs", no_argument, NULL, OPT_NO_DBS},
         {NULL, 0, NULL, 0},
     };
@@ -1784,6 +1792,12 @@ parse_options(int argc, char *argv[],
             *active = true;
             break;
 
+        case OPT_LEADER_TIMEOUT:
+            if (!str_to_uint(optarg, 10, leader_timeout)) {
+                ovs_fatal(0, "leader-timeout must be a non-negative integer.");
+            }
+            break;
+
         case OPT_NO_DBS:
             add_default_db = false;
             break;
@@ -1822,6 +1836,7 @@ usage(void)
     daemon_usage();
     vlog_usage();
     replication_usage();
+    //cluster_usage();
     printf("\nOther options:\n"
            "  --run COMMAND           run COMMAND as subprocess then exit\n"
            "  --unixctl=SOCKET        override default control socket name\n"

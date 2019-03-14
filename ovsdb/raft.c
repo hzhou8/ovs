@@ -238,8 +238,11 @@ struct raft {
     uint64_t last_applied;      /* Max log index applied to state machine. */
     struct uuid leader_sid;     /* Server ID of leader (zero, if unknown). */
 
+#define ELECTION_DEFAULT 1024   /* Default value of election_interval. */
+    unsigned int election_interval; /* election_interval +
+                                       random(ELECTION_RANGE_MSEC) is the time
+                                       to wait before starting an election. */
     /* Followers and candidates only. */
-#define ELECTION_BASE_MSEC 1024
 #define ELECTION_RANGE_MSEC 1024
     long long int election_base;    /* Time of last heartbeat from leader. */
     long long int election_timeout; /* Time at which we start an election. */
@@ -269,7 +272,6 @@ struct raft {
     struct hmap add_servers;    /* Contains "struct raft_server"s to add. */
     struct raft_server *remove_server; /* Server being removed. */
     struct hmap commands;       /* Contains "struct raft_command"s. */
-#define PING_TIME_MSEC (ELECTION_BASE_MSEC / 3)
     long long int ping_timeout; /* Time at which to send a heartbeat */
 
     /* Candidates only.  Reinitialized at start of election. */
@@ -360,7 +362,7 @@ raft_make_address_passive(const char *address_)
 }
 
 static struct raft *
-raft_alloc(void)
+raft_alloc(unsigned int election_interval)
 {
     raft_init();
 
@@ -377,6 +379,8 @@ raft_alloc(void)
     hmap_init(&raft->add_servers);
     hmap_init(&raft->commands);
 
+    raft->election_interval = election_interval ? election_interval :
+        ELECTION_DEFAULT;
     raft_reset_ping_timer(raft);
     raft_reset_election_timer(raft);
 
@@ -541,7 +545,7 @@ raft_join_cluster(const char *file_name,
 struct ovsdb_error * OVS_WARN_UNUSED_RESULT
 raft_read_metadata(struct ovsdb_log *log, struct raft_metadata *md)
 {
-    struct raft *raft = raft_alloc();
+    struct raft *raft = raft_alloc(0);
     raft->log = log;
 
     struct ovsdb_error *error = raft_read_header(raft);
@@ -868,7 +872,7 @@ raft_read_log(struct raft *raft)
 static void
 raft_reset_election_timer(struct raft *raft)
 {
-    unsigned int duration = (ELECTION_BASE_MSEC
+    unsigned int duration = (raft->election_interval
                              + random_range(ELECTION_RANGE_MSEC));
     raft->election_base = time_msec();
     raft->election_timeout = raft->election_base + duration;
@@ -877,7 +881,7 @@ raft_reset_election_timer(struct raft *raft)
 static void
 raft_reset_ping_timer(struct raft *raft)
 {
-    raft->ping_timeout = time_msec() + PING_TIME_MSEC;
+    raft->ping_timeout = time_msec() + raft->election_interval / 3;
 }
 
 static void
@@ -900,9 +904,10 @@ raft_add_conn(struct raft *raft, struct jsonrpc_session *js,
  * the cluster's log in 'file_name'.  Takes ownership of 'log', whether
  * successful or not. */
 struct ovsdb_error * OVS_WARN_UNUSED_RESULT
-raft_open(struct ovsdb_log *log, struct raft **raftp)
+raft_open(struct ovsdb_log *log, unsigned int election_interval,
+          struct raft **raftp)
 {
-    struct raft *raft = raft_alloc();
+    struct raft *raft = raft_alloc(election_interval);
     raft->log = log;
 
     struct ovsdb_error *error = raft_read_header(raft);
@@ -1113,7 +1118,7 @@ raft_send_remove_server_requests(struct raft *raft)
         }
     }
 
-    raft->leave_timeout = time_msec() + ELECTION_BASE_MSEC;
+    raft->leave_timeout = time_msec() + raft->election_interval;
 }
 
 /* Attempts to start 'raft' leaving its cluster.  The caller can check progress
@@ -1130,7 +1135,7 @@ raft_leave(struct raft *raft)
     raft_transfer_leadership(raft, "this server is leaving the cluster");
     raft_become_follower(raft);
     raft_send_remove_server_requests(raft);
-    raft->leave_timeout = time_msec() + ELECTION_BASE_MSEC;
+    raft->leave_timeout = time_msec() + raft->election_interval;
 }
 
 /* Returns true if 'raft' is currently attempting to leave its cluster. */
@@ -1785,7 +1790,7 @@ raft_run(struct raft *raft)
             struct raft_command *cmd, *next_cmd;
             HMAP_FOR_EACH_SAFE (cmd, next_cmd, hmap_node, &raft->commands) {
                 if (cmd->timestamp
-                    && now - cmd->timestamp > ELECTION_BASE_MSEC) {
+                    && now - cmd->timestamp > raft->election_interval) {
                     raft_command_complete(raft, cmd, RAFT_CMD_TIMEOUT);
                 }
             }
@@ -3231,10 +3236,10 @@ raft_should_suppress_disruptive_server(struct raft *raft,
         return true;
 
     case RAFT_FOLLOWER:
-        if (now < raft->election_base + ELECTION_BASE_MSEC) {
+        if (now < raft->election_base + raft->election_interval) {
             VLOG_WARN_RL(&rl, "ignoring vote request received after only "
                          "%lld ms (minimum election time is %d ms)",
-                         now - raft->election_base, ELECTION_BASE_MSEC);
+                         now - raft->election_base, raft->election_interval);
             return true;
         }
         return false;
