@@ -131,7 +131,7 @@ ovsdb|WARN|schema: changed 2 columns in 'OVN_Southbound' database from ephemeral
     done
     export OVN_SB_DB
 
-    n1=10 n2=5
+    n1=40 n2=20
     echo "starting $n1*$n2 ovn-sbctl processes..."
     for i in $(seq 0 $(expr $n1 - 1) ); do
         (for j in $(seq $n2); do
@@ -168,7 +168,7 @@ ovsdb|WARN|schema: changed 2 columns in 'OVN_Southbound' database from ephemeral
 
         case $(cat phase) in # (
         0)
-            if test $done -ge $(expr $n1 / 4); then
+            if test $done -ge $(expr $n1 / 5); then
                 if test $variant = kill; then
                     stop_server $victim
                 else
