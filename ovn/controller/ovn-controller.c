@@ -1893,7 +1893,9 @@ main(int argc, char *argv[])
 
                     stopwatch_start(CONTROLLER_LOOP_STOPWATCH_NAME,
                                     time_msec());
-                    engine_run(&en_flow_output, ++engine_run_id);
+                    if (ovnsb_idl_txn) {
+                        engine_run(&en_flow_output, ++engine_run_id);
+                    }
                     stopwatch_stop(CONTROLLER_LOOP_STOPWATCH_NAME,
                                    time_msec());
                     if (ovs_idl_txn) {
