@@ -1931,7 +1931,10 @@ main(int argc, char *argv[])
             pinctrl_wait(ovnsb_idl_txn);
         }
 
-        ovsdb_idl_loop_commit_and_wait(&ovnsb_idl_loop);
+        if (!ovsdb_idl_loop_commit_and_wait(&ovnsb_idl_loop)) {
+            VLOG_INFO("OVNSB commit failed, force recompute next time.");
+            engine_set_force_recompute(true);
+        }
 
         if (ovsdb_idl_loop_commit_and_wait(&ovs_idl_loop) == 1) {
             struct shash_node *iter, *iter_next;
