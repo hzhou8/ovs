@@ -1875,58 +1875,60 @@ main(int argc, char *argv[])
                                       ovs_table, chassis_id, br_int);
             }
 
-            if (br_int && chassis) {
+            if (br_int) {
                 ofctrl_run(br_int, &ed_runtime_data.pending_ct_zones);
 
-                patch_run(ovs_idl_txn,
-                          ovsrec_bridge_table_get(ovs_idl_loop.idl),
-                          ovsrec_open_vswitch_table_get(ovs_idl_loop.idl),
-                          ovsrec_port_table_get(ovs_idl_loop.idl),
-                          sbrec_port_binding_table_get(ovnsb_idl_loop.idl),
-                          br_int, chassis);
-                encaps_run(ovs_idl_txn,
-                           bridge_table, br_int,
-                           sbrec_chassis_table_get(ovnsb_idl_loop.idl),
-                           chassis_id,
-                           sbrec_sb_global_first(ovnsb_idl_loop.idl));
+                if (chassis) {
+                    patch_run(ovs_idl_txn,
+                              ovsrec_bridge_table_get(ovs_idl_loop.idl),
+                              ovsrec_open_vswitch_table_get(ovs_idl_loop.idl),
+                              ovsrec_port_table_get(ovs_idl_loop.idl),
+                              sbrec_port_binding_table_get(ovnsb_idl_loop.idl),
+                              br_int, chassis);
+                    encaps_run(ovs_idl_txn,
+                               bridge_table, br_int,
+                               sbrec_chassis_table_get(ovnsb_idl_loop.idl),
+                               chassis_id,
+                               sbrec_sb_global_first(ovnsb_idl_loop.idl));
 
-                stopwatch_start(CONTROLLER_LOOP_STOPWATCH_NAME,
-                                time_msec());
-                engine_run(&en_flow_output, ++engine_run_id);
-                stopwatch_stop(CONTROLLER_LOOP_STOPWATCH_NAME,
-                               time_msec());
-                if (ovs_idl_txn) {
-                    commit_ct_zones(br_int, &ed_runtime_data.pending_ct_zones);
-                    bfd_run(sbrec_chassis_by_name,
-                            sbrec_port_binding_by_datapath,
-                            ovsrec_interface_table_get(ovs_idl_loop.idl),
-                            br_int, chassis,
-                            sbrec_sb_global_table_get(ovnsb_idl_loop.idl),
-                            &ed_runtime_data.local_datapaths);
+                    stopwatch_start(CONTROLLER_LOOP_STOPWATCH_NAME,
+                                    time_msec());
+                    engine_run(&en_flow_output, ++engine_run_id);
+                    stopwatch_stop(CONTROLLER_LOOP_STOPWATCH_NAME,
+                                   time_msec());
+                    if (ovs_idl_txn) {
+                        commit_ct_zones(br_int,
+                                        &ed_runtime_data.pending_ct_zones);
+                        bfd_run(sbrec_chassis_by_name,
+                                sbrec_port_binding_by_datapath,
+                                ovsrec_interface_table_get(ovs_idl_loop.idl),
+                                br_int, chassis,
+                                sbrec_sb_global_table_get(ovnsb_idl_loop.idl),
+                                &ed_runtime_data.local_datapaths);
+                    }
+                    ofctrl_put(&ed_flow_output.flow_table,
+                               &ed_runtime_data.pending_ct_zones,
+                               sbrec_meter_table_get(ovnsb_idl_loop.idl),
+                               get_nb_cfg(sbrec_sb_global_table_get(
+                                              ovnsb_idl_loop.idl)),
+                               en_flow_output.changed);
+                    pinctrl_run(ovnsb_idl_txn, sbrec_chassis_by_name,
+                                sbrec_datapath_binding_by_key,
+                                sbrec_port_binding_by_datapath,
+                                sbrec_port_binding_by_key,
+                                sbrec_port_binding_by_name,
+                                sbrec_mac_binding_by_lport_ip,
+                                sbrec_dns_table_get(ovnsb_idl_loop.idl),
+                                br_int, chassis,
+                                &ed_runtime_data.local_datapaths,
+                                &ed_runtime_data.active_tunnels);
+
+                    if (en_runtime_data.changed) {
+                        update_sb_monitors(ovnsb_idl_loop.idl, chassis,
+                                           &ed_runtime_data.local_lports,
+                                           &ed_runtime_data.local_datapaths);
+                    }
                 }
-                ofctrl_put(&ed_flow_output.flow_table,
-                           &ed_runtime_data.pending_ct_zones,
-                           sbrec_meter_table_get(ovnsb_idl_loop.idl),
-                           get_nb_cfg(sbrec_sb_global_table_get(
-                                          ovnsb_idl_loop.idl)),
-                           en_flow_output.changed);
-                pinctrl_run(ovnsb_idl_txn, sbrec_chassis_by_name,
-                            sbrec_datapath_binding_by_key,
-                            sbrec_port_binding_by_datapath,
-                            sbrec_port_binding_by_key,
-                            sbrec_port_binding_by_name,
-                            sbrec_mac_binding_by_lport_ip,
-                            sbrec_dns_table_get(ovnsb_idl_loop.idl),
-                            br_int, chassis,
-                            &ed_runtime_data.local_datapaths,
-                            &ed_runtime_data.active_tunnels);
-
-                if (en_runtime_data.changed) {
-                    update_sb_monitors(ovnsb_idl_loop.idl, chassis,
-                                       &ed_runtime_data.local_lports,
-                                       &ed_runtime_data.local_datapaths);
-                }
-
             }
             if (old_engine_run_id == engine_run_id) {
                 if (engine_need_run(&en_flow_output)) {
