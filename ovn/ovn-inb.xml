@@ -1,0 +1,604 @@
+<?xml version="1.0" encoding="utf-8"?>
+<database name="ovn-inb" title="OVN Interconnection Northbound Database">
+  <p>
+    This database is the interface between OVN and the cloud management system
+    (CMS), such as OpenStack, running above it.  The CMS produces almost all of
+    the contents of the database.  The <code>ovn-northd</code> program
+    monitors the database contents, transforms it, and stores it into the <ref
+    db="OVN_IC_Southbound"/> database.
+  </p>
+
+  <p>
+    We generally speak of ``the'' CMS, but one can imagine scenarios in
+    which multiple CMSes manage different parts of an OVN deployment.
+  </p>
+
+  <h2>External IDs</h2>
+
+  <p>
+    Each of the tables in this database contains a special column, named
+    <code>external_ids</code>.  This column has the same form and purpose each
+    place it appears.
+  </p>
+
+  <dl>
+    <dt><code>external_ids</code>: map of string-string pairs</dt>
+    <dd>
+      Key-value pairs for use by the CMS.  The CMS might use certain pairs, for
+      example, to identify entities in its own configuration that correspond to
+      those in this database.
+    </dd>
+  </dl>
+
+  <table name="INB_Global" title="IC Northbound configuration">
+    <p>
+      Northbound configuration for an OVN system.  This table must have exactly
+      one row.
+    </p>
+
+    <group title="Status">
+      These columns allow a client to track the overall configuration state of
+      the system.
+
+      <column name="inb_cfg">
+        Sequence number for client to increment.  When a client modifies any
+        part of the northbound database configuration and wishes to wait for
+        <code>ovn-northd</code> and possibly all of the hypervisors to finish
+        applying the changes, it may increment this sequence number.
+      </column>
+
+      <column name="isb_cfg">
+        Sequence number that <code>ovn-northd</code> sets to the value of <ref
+        column="nb_cfg"/> after it finishes applying the corresponding
+        configuration changes to the <ref db="OVN_Southbound"/> database.
+      </column>
+
+      <column name="az_cfg">
+        Sequence number that <code>ovn-northd</code> sets to the smallest
+        sequence number of all the chassis in the system, as reported in the
+        <code>Chassis</code> table in the southbound database.  Thus, <ref
+        column="hv_cfg"/> equals <ref column="nb_cfg"/> if all chassis are
+        caught up with the northbound configuration (which may never happen, if
+        any chassis is down).  This value can regress, if a chassis was removed
+        from the system and rejoins before catching up.
+      </column>
+    </group>
+
+    <group title="Common Columns">
+      <column name="external_ids">
+        See <em>External IDs</em> at the beginning of this document.
+      </column>
+    </group>
+
+    <group title="Common options">
+      <column name="options">
+        This column provides general key/value settings. The supported
+        options are described individually below.
+      </column>
+
+      <group title="Options for configuring BFD">
+        <p>
+          These options apply when <code>ovn-controller</code> configures
+          BFD on tunnels interfaces.
+        </p>
+
+        <column name="options" key="bfd-min-rx">
+          BFD option <code>min-rx</code> value to use when configuring BFD on
+          tunnel interfaces.
+        </column>
+
+        <column name="options" key="bfd-decay-min-rx">
+          BFD option <code>decay-min-rx</code> value to use when configuring
+          BFD on tunnel interfaces.
+        </column>
+
+        <column name="options" key="bfd-min-tx">
+          BFD option <code>min-tx</code> value to use when configuring BFD on
+          tunnel interfaces.
+        </column>
+
+        <column name="options" key="bfd-mult">
+          BFD option <code>mult</code> value to use when configuring BFD on
+          tunnel interfaces.
+        </column>
+      </group>
+
+      <column name="options" key="mac_prefix">
+        Configure a given OUI to be used as prefix when L2 address is
+        dynamically assigned, e.g. <code>00:11:22</code>
+      </column>
+
+      <column name="options" key="controller_event" type='{"type": "boolean"}'>
+        Value set by the CMS to enable/disable ovn-controller event reporting.
+        Traffic into OVS can raise a 'controller' event that results in a
+        Controller_Event being written to the <ref table="Controller_Event"/>
+        table in SBDB. When the CMS has seen the event and taken appropriate
+        action, it can remove the correponding row in
+        <ref table="Controller_Event"/> table.
+        The intention is for a CMS to see the events and take some sort of
+        action. Please see the <ref table="Controller_Event"/> table in SBDB.
+      </column>
+    </group>
+
+    <group title="Connection Options">
+      <column name="connections">
+        Database clients to which the Open vSwitch database server should
+        connect or on which it should listen, along with options for how these
+        connections should be configured.  See the <ref table="Connection"/>
+        table for more information.
+      </column>
+      <column name="ssl">
+        Global SSL configuration.
+      </column>
+    </group>
+    <group title="Security Configurations">
+      <column name="ipsec">
+        Tunnel encryption configuration. If this column is set to be true, all
+        OVN tunnels will be encrypted with IPsec.
+      </column>
+    </group>
+  </table>
+
+  <table name="Transit_Switch" title="L2 logical switch">
+    <p>
+      Each row represents one L2 logical switch.
+    </p>
+
+    <p>
+      There are two kinds of logical switches, that is, ones that fully
+      virtualize the network (overlay logical switches) and ones that provide
+      simple connectivity to a physical network (bridged logical switches).
+      They work in the same way when providing connectivity between logical
+      ports on same chasis, but differently when connecting remote logical
+      ports.  Overlay logical switches connect remote logical ports by tunnels,
+      while bridged logical switches provide connectivity to remote ports by
+      bridging the packets to directly connected physical L2 segment with the
+      help of <code>localnet</code> ports.  Each bridged logical switch has
+      one and only one <code>localnet</code> port, which has only one special
+      address <code>unknown</code>.
+    </p>
+
+    <group title="Naming">
+      <p>
+        These columns provide names for the logical switch.  From OVN's
+        perspective, these names have no special meaning or purpose other than
+        to provide convenience for human interaction with the  database.
+        There is no requirement for the name to be unique.  (For a unique
+        identifier for a logical switch, use its row UUID.)
+      </p>
+
+      <p>
+        (Originally, <ref column="name"/> was intended to serve the purpose of
+        a human-friendly name, but the Neutron integration used it to uniquely
+        identify its own switch object, in the format
+        <code>neutron-<var>uuid</var></code>.  Later on, Neutron started
+        propagating the friendly name of a switch as <ref column="external_ids"
+        key="neutron:network_name"/>.  Perhaps this can be cleaned up someday.)
+      </p>
+
+      <column name="name">
+        A name for the logical switch.
+      </column>
+
+      <column name="external_ids" key="neutron:network_name">
+        Another name for the logical switch.
+      </column>
+    </group>
+
+    <group title="IP Address Assignment">
+      <p>
+        These options control automatic IP address management (IPAM) for ports
+        attached to the logical switch.  To enable IPAM for IPv4, set <ref
+        column="other_config" key="subnet"/> and optionally <ref
+        column="other_config:exclude_ips"/>.  To enable IPAM for IPv6, set
+        <ref column="other_config" key="ipv6_prefix"/>.  IPv4 and IPv6 may
+        be enabled together or separately.
+      </p>
+
+      <p>
+        To request dynamic address assignment for a particular port, use the
+        <code>dynamic</code> keyword in the <ref table="Logical_Switch_Port"
+        column="addresses"/> column of the port's <ref
+        table="Logical_Switch_Port"/> row.  This requests both an IPv4 and an
+        IPv6 address, if IPAM for IPv4 and IPv6 are both enabled.
+      </p>
+
+      <column name="other_config" key="subnet">
+        Set this to an IPv4 subnet, e.g. <code>192.168.0.0/24</code>, to enable
+        <code>ovn-northd</code> to automatically assign IP addresses within
+        that subnet.
+      </column>
+
+      <column name="other_config" key="exclude_ips">
+        <p>
+          To exclude some addresses from automatic IP address management, set
+          this to a list of the IPv4 addresses or <code>..</code>-delimited
+          ranges to exclude.  The addresses or ranges should be a subset of
+          those in <ref column="other_config" key="subnet"/>.
+        </p>
+        <p>
+          Whether listed or not, <code>ovn-northd</code> will never allocate
+          the first or last address in a subnet, such as 192.168.0.0 or
+          192.168.0.255 in 192.168.0.0/24.
+        </p>
+        <p>
+          Examples:
+        </p>
+        <ul>
+          <li><code>192.168.0.2 192.168.0.10</code></li>
+          <li><code>192.168.0.4 192.168.0.30..192.168.0.60 192.168.0.110..192.168.0.120</code></li>
+          <li><code>192.168.0.110..192.168.0.120 192.168.0.25..192.168.0.30 192.168.0.144</code></li>
+        </ul>
+      </column>
+
+      <column name="other_config" key="ipv6_prefix">
+        Set this to an IPv6 prefix to enable <code>ovn-northd</code> to
+        automatically assign IPv6 addresses using this prefix.  The assigned
+        IPv6 address will be generated using the IPv6 prefix and the MAC
+        address (converted to an IEEE EUI64 identifier) of the port.  The IPv6
+        prefix defined here should be a valid IPv6 address ending with
+        <code>::</code>.
+        <p>
+          Examples:
+        </p>
+        <ul>
+          <li><code>aef0::</code></li>
+          <li><code>bef0:1234:a890:5678::</code></li>
+          <li><code>8230:5678::</code></li>
+        </ul>
+      </column>
+
+      <column name="other_config" key="mac_only" type='{"type": "boolean"}'>
+        Value used to request to assign L2 address only if neither subnet
+        nor ipv6_prefix are specified
+      </column>
+    </group>
+
+    <group title="IP Multicast Snooping Options">
+      <p>
+        These options control IP Multicast Snooping configuration of the
+        logical switch. To enable IP Multicast Snooping set
+        <ref column="other_config" key="mcast_snoop"/> to true. To enable IP
+        Multicast Querier set <ref column="other_config" key="mcast_snoop"/>
+        to true. If IP Multicast Querier is enabled
+        <ref column="other_config" key="mcast_eth_src"/> and
+        <ref column="other_config" key="mcast_ip4_src"/> must be set.
+      </p>
+      <column name="other_config" key="mcast_snoop"
+          type='{"type": "boolean"}'>
+        Enables/disables IP Multicast Snooping on the logical switch.
+      </column>
+      <column name="other_config" key="mcast_querier"
+          type='{"type": "boolean"}'>
+        Enables/disables IP Multicast Querier on the logical switch.
+      </column>
+      <column name="other_config" key="mcast_flood_unregistered"
+          type='{"type": "boolean"}'>
+        Determines whether unregistered multicast traffic should be flooded
+        or not. Only applicable if
+        <ref column="other_config" key="mcast_snoop"/> is enabled.
+      </column>
+      <column name="other_config" key="mcast_table_size"
+          type='{"type": "integer", "minInteger": 1, "maxInteger": 32766}'>
+        Number of multicast groups to be stored. Default: 2048.
+      </column>
+      <column name="other_config" key="mcast_idle_timeout"
+          type='{"type": "integer", "minInteger": 15, "maxInteger": 3600}'>
+        Configures the IP Multicast Snooping group idle timeout (in seconds).
+        Default: 300 seconds.
+      </column>
+      <column name="other_config" key="mcast_query_interval"
+          type='{"type": "integer", "minInteger": 1, "maxInteger": 3600}'>
+        Configures the IP Multicast Querier interval between queries (in
+        seconds). Default:
+        <ref column="other_config" key="mcast_idle_timeout"/> / 2.
+      </column>
+      <column name="other_config" key="mcast_query_max_response"
+          type='{"type": "integer", "minInteger": 1, "maxInteger": 10}'>
+        Configures the value of the "max-response" field in the multicast
+        queries originated by the logical switch. Default: 1 second.
+      </column>
+      <column name="other_config" key="mcast_eth_src">
+        Configures the source Ethernet address for queries originated by the
+        logical switch.
+      </column>
+      <column name="other_config" key="mcast_ip4_src">
+        Configures the source IPv4 address for queries originated by the
+        logical switch.
+      </column>
+    </group>
+
+    <group title="Common Columns">
+      <column name="external_ids">
+        See <em>External IDs</em> at the beginning of this document.
+      </column>
+    </group>
+  </table>
+
+  <table name="SSL">
+    SSL configuration for ovn-nb database access.
+
+    <column name="private_key">
+      Name of a PEM file containing the private key used as the switch's
+      identity for SSL connections to the controller.
+    </column>
+
+    <column name="certificate">
+      Name of a PEM file containing a certificate, signed by the
+      certificate authority (CA) used by the controller and manager,
+      that certifies the switch's private key, identifying a trustworthy
+      switch.
+    </column>
+
+    <column name="ca_cert">
+      Name of a PEM file containing the CA certificate used to verify
+      that the switch is connected to a trustworthy controller.
+    </column>
+
+    <column name="bootstrap_ca_cert">
+      If set to <code>true</code>, then Open vSwitch will attempt to
+      obtain the CA certificate from the controller on its first SSL
+      connection and save it to the named PEM file. If it is successful,
+      it will immediately drop the connection and reconnect, and from then
+      on all SSL connections must be authenticated by a certificate signed
+      by the CA certificate thus obtained.  <em>This option exposes the
+      SSL connection to a man-in-the-middle attack obtaining the initial
+      CA certificate.</em>  It may still be useful for bootstrapping.
+    </column>
+
+    <column name="ssl_protocols">
+      List of SSL protocols to be enabled for SSL connections. The default
+      when this option is omitted is <code>TLSv1,TLSv1.1,TLSv1.2</code>.
+    </column>
+
+    <column name="ssl_ciphers">
+      List of ciphers (in OpenSSL cipher string format) to be supported
+      for SSL connections. The default when this option is omitted is
+      <code>HIGH:!aNULL:!MD5</code>.
+    </column>
+
+    <group title="Common Columns">
+      The overall purpose of these columns is described under <code>Common
+      Columns</code> at the beginning of this document.
+
+      <column name="external_ids"/>
+    </group>
+  </table>
+
+  <table name="Connection" title="OVSDB client connections.">
+    <p>
+      Configuration for a database connection to an Open vSwitch database
+      (OVSDB) client.
+    </p>
+
+    <p>
+      This table primarily configures the Open vSwitch database server
+      (<code>ovsdb-server</code>).
+    </p>
+
+    <p>
+      The Open vSwitch database server can initiate and maintain active
+      connections to remote clients.  It can also listen for database
+      connections.
+    </p>
+
+    <group title="Core Features">
+      <column name="target">
+        <p>Connection methods for clients.</p>
+        <p>
+          The following connection methods are currently supported:
+        </p>
+        <dl>
+          <dt><code>ssl:<var>host</var></code>[<code>:<var>port</var></code>]</dt>
+          <dd>
+            <p>
+              The specified SSL <var>port</var> on the host at the given
+              <var>host</var>, which can either be a DNS name (if built with
+              unbound library) or an IP address. A valid SSL configuration must
+              be provided when this form is used, this configuration can be
+              specified via command-line options or the <ref table="SSL"/> table.
+            </p>
+            <p>
+              If <var>port</var> is not specified, it defaults to 6640.
+            </p>
+            <p>
+              SSL support is an optional feature that is not always
+              built as part of Open vSwitch.
+            </p>
+          </dd>
+
+          <dt><code>tcp:<var>host</var></code>[<code>:<var>port</var></code>]</dt>
+          <dd>
+            <p>
+              The specified TCP <var>port</var> on the host at the given
+              <var>host</var>, which can either be a DNS name (if built with
+              unbound library) or an IP address.  If <var>host</var> is an IPv6
+              address, wrap it in square brackets, e.g. <code>tcp:[::1]:6640</code>.
+            </p>
+            <p>
+              If <var>port</var> is not specified, it defaults to 6640.
+            </p>
+          </dd>
+          <dt><code>pssl:</code>[<var>port</var>][<code>:<var>host</var></code>]</dt>
+          <dd>
+            <p>
+              Listens for SSL connections on the specified TCP <var>port</var>.
+              Specify 0 for <var>port</var> to have the kernel automatically
+              choose an available port.  If <var>host</var>, which can either
+              be a DNS name (if built with unbound library) or an IP address,
+              is specified, then connections are restricted to the resolved or
+              specified local IPaddress (either IPv4 or IPv6 address).  If
+              <var>host</var> is an IPv6 address, wrap in square brackets,
+              e.g. <code>pssl:6640:[::1]</code>.  If <var>host</var> is not
+              specified then it listens only on IPv4 (but not IPv6) addresses.
+              A valid SSL configuration must be provided when this form is used,
+             this can be specified either via command-line options or the
+             <ref table="SSL"/> table.
+            </p>
+            <p>
+              If <var>port</var> is not specified, it defaults to 6640.
+            </p>
+            <p>
+              SSL support is an optional feature that is not always built as
+              part of Open vSwitch.
+            </p>
+          </dd>
+          <dt><code>ptcp:</code>[<var>port</var>][<code>:<var>host</var></code>]</dt>
+          <dd>
+            <p>
+              Listens for connections on the specified TCP <var>port</var>.
+              Specify 0 for <var>port</var> to have the kernel automatically
+              choose an available port.  If <var>host</var>, which can either
+              be a DNS name (if built with unbound library) or an IP address,
+              is specified, then connections are restricted to the resolved or
+              specified local IP address (either IPv4 or IPv6 address).  If
+              <var>host</var> is an IPv6 address, wrap it in square brackets,
+              e.g. <code>ptcp:6640:[::1]</code>.  If <var>host</var> is not
+              specified then it listens only on IPv4 addresses.
+            </p>
+            <p>
+              If <var>port</var> is not specified, it defaults to 6640.
+            </p>
+          </dd>
+        </dl>
+        <p>When multiple clients are configured, the <ref column="target"/>
+        values must be unique.  Duplicate <ref column="target"/> values yield
+        unspecified results.</p>
+      </column>
+    </group>
+
+    <group title="Client Failure Detection and Handling">
+      <column name="max_backoff">
+        Maximum number of milliseconds to wait between connection attempts.
+        Default is implementation-specific.
+      </column>
+
+      <column name="inactivity_probe">
+        Maximum number of milliseconds of idle time on connection to the client
+        before sending an inactivity probe message.  If Open vSwitch does not
+        communicate with the client for the specified number of seconds, it
+        will send a probe.  If a response is not received for the same
+        additional amount of time, Open vSwitch assumes the connection has been
+        broken and attempts to reconnect.  Default is implementation-specific.
+        A value of 0 disables inactivity probes.
+      </column>
+    </group>
+
+    <group title="Status">
+      <p>
+        Key-value pair of <ref column="is_connected"/> is always updated.
+        Other key-value pairs in the status columns may be updated depends
+        on the <ref column="target"/> type.
+      </p>
+
+      <p>
+        When <ref column="target"/> specifies a connection method that
+        listens for inbound connections (e.g. <code>ptcp:</code> or
+        <code>punix:</code>), both <ref column="n_connections"/> and
+        <ref column="is_connected"/> may also be updated while the
+        remaining key-value pairs are omitted.
+      </p>
+
+      <p>
+        On the other hand, when <ref column="target"/> specifies an
+        outbound connection, all key-value pairs may be updated, except
+        the above-mentioned two key-value pairs associated with inbound
+        connection targets. They are omitted.
+      </p>
+
+    <column name="is_connected">
+        <code>true</code> if currently connected to this client,
+        <code>false</code> otherwise.
+      </column>
+
+      <column name="status" key="last_error">
+        A human-readable description of the last error on the connection
+        to the manager; i.e. <code>strerror(errno)</code>.  This key
+        will exist only if an error has occurred.
+      </column>
+
+      <column name="status" key="state"
+              type='{"type": "string", "enum": ["set", ["VOID", "BACKOFF", "CONNECTING", "ACTIVE", "IDLE"]]}'>
+        <p>
+          The state of the connection to the manager:
+        </p>
+        <dl>
+          <dt><code>VOID</code></dt>
+          <dd>Connection is disabled.</dd>
+
+          <dt><code>BACKOFF</code></dt>
+          <dd>Attempting to reconnect at an increasing period.</dd>
+
+          <dt><code>CONNECTING</code></dt>
+          <dd>Attempting to connect.</dd>
+
+          <dt><code>ACTIVE</code></dt>
+          <dd>Connected, remote host responsive.</dd>
+
+          <dt><code>IDLE</code></dt>
+          <dd>Connection is idle.  Waiting for response to keep-alive.</dd>
+        </dl>
+        <p>
+          These values may change in the future.  They are provided only for
+          human consumption.
+        </p>
+      </column>
+
+      <column name="status" key="sec_since_connect"
+              type='{"type": "integer", "minInteger": 0}'>
+        The amount of time since this client last successfully connected
+        to the database (in seconds). Value is empty if client has never
+        successfully been connected.
+      </column>
+
+      <column name="status" key="sec_since_disconnect"
+              type='{"type": "integer", "minInteger": 0}'>
+        The amount of time since this client last disconnected from the
+        database (in seconds). Value is empty if client has never
+        disconnected.
+      </column>
+
+      <column name="status" key="locks_held">
+        Space-separated list of the names of OVSDB locks that the connection
+        holds.  Omitted if the connection does not hold any locks.
+      </column>
+
+      <column name="status" key="locks_waiting">
+        Space-separated list of the names of OVSDB locks that the connection is
+        currently waiting to acquire.  Omitted if the connection is not waiting
+        for any locks.
+      </column>
+
+      <column name="status" key="locks_lost">
+        Space-separated list of the names of OVSDB locks that the connection
+        has had stolen by another OVSDB client.  Omitted if no locks have been
+        stolen from this connection.
+      </column>
+
+      <column name="status" key="n_connections"
+              type='{"type": "integer", "minInteger": 2}'>
+        When <ref column="target"/> specifies a connection method that
+        listens for inbound connections (e.g. <code>ptcp:</code> or
+        <code>pssl:</code>) and more than one connection is actually active,
+        the value is the number of active connections.  Otherwise, this
+        key-value pair is omitted.
+      </column>
+
+      <column name="status" key="bound_port" type='{"type": "integer"}'>
+        When <ref column="target"/> is <code>ptcp:</code> or
+        <code>pssl:</code>, this is the TCP port on which the OVSDB server is
+        listening.  (This is particularly useful when <ref
+        column="target"/> specifies a port of 0, allowing the kernel to
+        choose any available port.)
+      </column>
+    </group>
+
+    <group title="Common Columns">
+      The overall purpose of these columns is described under <code>Common
+      Columns</code> at the beginning of this document.
+
+      <column name="external_ids"/>
+      <column name="other_config"/>
+    </group>
+  </table>
+</database>
