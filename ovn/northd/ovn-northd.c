@@ -758,6 +758,14 @@ ovn_datapath_update_external_ids(struct ovn_datapath *od)
     if (name2 && name2[0]) {
         smap_add(&ids, "name2", name2);
     }
+
+    /* Set interconn-ts. */
+    if (od->nbs) {
+        const char *ts = smap_get(&od->nbs->other_config, "interconn-ts");
+        if (ts) {
+            smap_add(&ids, "interconn-ts", ts);
+        }
+    }
     sbrec_datapath_binding_set_external_ids(od->sb, &ids);
     smap_destroy(&ids);
 }
