@@ -301,6 +301,14 @@
       See <code>ovn-controller</code>(8) for more information.
     </column>
 
+    <column name="is_interconn">
+      XXX
+    </column>
+
+    <column name="is_remote">
+      XXX
+    </column>
+
     <column name="external_ids" key="ovn-chassis-mac-mappings">
       <code>ovn-controller</code> populates this key with the set of options
       configured in the <ref table="Open_vSwitch"

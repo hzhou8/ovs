@@ -92,6 +92,8 @@ struct ovs_chassis_cfg {
     struct sset encap_ip_set;
     /* Interface type list formatted in the OVN-SB Chassis required format. */
     struct ds iface_types;
+    /* Is this chassis an interconnection gateway. */
+    bool is_interconn;
 };
 
 static void
@@ -170,6 +172,12 @@ get_datapath_type(const struct ovsrec_bridge *br_int)
     }
 
     return "";
+}
+
+static bool
+get_is_interconn(const struct smap *ext_ids)
+{
+    return smap_get_bool(ext_ids, "is-interconn", false);
 }
 
 static void
@@ -284,6 +292,8 @@ chassis_parse_ovs_config(const struct ovsrec_open_vswitch_table *ovs_table,
         sset_destroy(&ovs_cfg->encap_type_set);
         sset_destroy(&ovs_cfg->encap_ip_set);
     }
+
+    ovs_cfg->is_interconn = get_is_interconn(&cfg->external_ids);
 
     return true;
 }
@@ -538,6 +548,10 @@ chassis_update(const struct sbrec_chassis *chassis_rec,
     }
 
     update_chassis_transport_zones(transport_zones, chassis_rec);
+
+    if (ovs_cfg->is_interconn != chassis_rec->is_interconn) {
+        sbrec_chassis_set_is_interconn(chassis_rec, ovs_cfg->is_interconn);
+    }
 
     /* If any of the encaps should change, update them. */
     bool tunnels_changed =
