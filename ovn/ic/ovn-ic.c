@@ -236,6 +236,102 @@ ts_run(struct ic_context *ctx)
 }
 
 static void
+gateway_run(struct ic_context *ctx, const struct isbrec_availability_zone *az)
+{
+    if (!ctx->ovnisb_txn || !ctx->ovnsb_txn) {
+        return;
+    }
+
+    struct shash local_gws = SHASH_INITIALIZER(&local_gws);
+    struct shash remote_gws = SHASH_INITIALIZER(&remote_gws);
+    const struct isbrec_gateway *gw;
+    ISBREC_GATEWAY_FOR_EACH (gw, ctx->ovnisb_idl) {
+        if (gw->availability_zone == az) {
+            shash_add(&local_gws, gw->name, gw);
+        } else {
+            shash_add(&remote_gws, gw->name, gw);
+        }
+    }
+
+    const struct sbrec_chassis *chassis;
+    SBREC_CHASSIS_FOR_EACH (chassis, ctx->ovnsb_idl) {
+        if (chassis->is_interconn) {
+            gw = shash_find_and_delete(&local_gws, chassis->name);
+            if (!gw) {
+                gw = isbrec_gateway_insert(ctx->ovnisb_txn);
+                isbrec_gateway_set_availability_zone(gw, az);
+                isbrec_gateway_set_name(gw, chassis->name);
+                isbrec_gateway_set_hostname(gw, chassis->hostname);
+
+                /* Sync encaps used by this chassis. */
+                ovs_assert(chassis->n_encaps);
+                struct isbrec_encap *isb_encap;
+                struct isbrec_encap **isb_encaps =
+                    xmalloc(chassis->n_encaps * sizeof *isb_encap);
+                size_t i;
+                for (i = 0; i < chassis->n_encaps; i++) {
+                    isb_encap = isbrec_encap_insert(ctx->ovnisb_txn);
+                    isbrec_encap_set_gateway_name(isb_encap,
+                                                  chassis->name);
+                    isbrec_encap_set_ip(isb_encap, chassis->encaps[i]->ip);
+                    isbrec_encap_set_type(isb_encap,
+                                          chassis->encaps[i]->type);
+                    isbrec_encap_set_options(isb_encap,
+                                             &chassis->encaps[i]->options);
+                    isb_encaps[i] = isb_encap;
+                }
+                isbrec_gateway_set_encaps(gw, isb_encaps,
+                                          chassis->n_encaps);
+                free(isb_encaps);
+            } else {
+                /* XXX Update ISB gateway/encaps, if any changes. */
+
+            }
+        } else if (chassis->is_remote) {
+            gw = shash_find_and_delete(&remote_gws, chassis->name);
+            if (!gw) {
+                sbrec_chassis_delete(chassis);
+                continue;
+            }
+            /* XXX Update SB chassis/encaps, if any changes. */
+        }
+    }
+
+    /* Delete extra gateways from ISB for the local AZ */
+    struct shash_node *node;
+    SHASH_FOR_EACH (node, &local_gws) {
+        isbrec_gateway_delete(node->data);
+    }
+    shash_destroy(&local_gws);
+
+    /* Create SB chassis for remote gateways in ISB */
+    SHASH_FOR_EACH (node, &remote_gws) {
+        gw = node->data;
+        chassis = sbrec_chassis_insert(ctx->ovnsb_txn);
+        sbrec_chassis_set_name(chassis, gw->name);
+        sbrec_chassis_set_hostname(chassis, gw->hostname);
+        sbrec_chassis_set_is_remote(chassis, true);
+        /* Sync encaps used by this gateway. */
+        ovs_assert(gw->n_encaps);
+        struct sbrec_encap *sb_encap;
+        struct sbrec_encap **sb_encaps =
+            xmalloc(gw->n_encaps * sizeof *sb_encap);
+        size_t i;
+        for (i = 0; i < gw->n_encaps; i++) {
+            sb_encap = sbrec_encap_insert(ctx->ovnsb_txn);
+            sbrec_encap_set_chassis_name(sb_encap, gw->name);
+            sbrec_encap_set_ip(sb_encap, gw->encaps[i]->ip);
+            sbrec_encap_set_type(sb_encap, gw->encaps[i]->type);
+            sbrec_encap_set_options(sb_encap, &gw->encaps[i]->options);
+            sb_encaps[i] = sb_encap;
+        }
+        sbrec_chassis_set_encaps(chassis, sb_encaps, gw->n_encaps);
+        free(sb_encaps);
+    }
+    shash_destroy(&remote_gws);
+}
+
+static void
 ovn_db_run(struct ic_context *ctx)
 {
     const struct isbrec_availability_zone *az = az_run(ctx);
@@ -246,6 +342,7 @@ ovn_db_run(struct ic_context *ctx)
     }
     
     ts_run(ctx);
+    gateway_run(ctx, az);
 }
 
 static void
