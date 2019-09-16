@@ -497,7 +497,12 @@
                 parent owning the <code>virtual ip</code>.
               </li>
             </ul>
-           </dd>
+          </dd>
+
+          <dt><code>remote</code></dt>
+          <dd>
+            XXX
+          </dd>
         </dl>
       </column>
     </group>
