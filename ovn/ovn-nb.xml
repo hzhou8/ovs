@@ -36,6 +36,14 @@
       one row.
     </p>
 
+    <group title="Avaialbility Zone">
+      These columns XXX
+
+      <column name="name">
+        XXX
+      </column>
+    </group>
+
     <group title="Status">
       These columns allow a client to track the overall configuration state of
       the system.
