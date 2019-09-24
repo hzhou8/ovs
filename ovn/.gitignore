@@ -8,4 +8,7 @@
 /ovn-inb.5
 /ovn-inb.gv
 /ovn-inb.pic
+/ovn-isb.5
+/ovn-isb.gv
+/ovn-isb.pic
 /*.ovsschema.stamp

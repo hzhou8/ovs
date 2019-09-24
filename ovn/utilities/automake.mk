@@ -54,6 +54,11 @@ bin_PROGRAMS += ovn/utilities/ovn-inbctl
 ovn_utilities_ovn_inbctl_SOURCES = ovn/utilities/ovn-inbctl.c
 ovn_utilities_ovn_inbctl_LDADD = ovn/lib/libovn.la ovsdb/libovsdb.la lib/libopenvswitch.la
 
+# ovn-isbctl
+bin_PROGRAMS += ovn/utilities/ovn-isbctl
+ovn_utilities_ovn_isbctl_SOURCES = ovn/utilities/ovn-isbctl.c
+ovn_utilities_ovn_isbctl_LDADD = ovn/lib/libovn.la ovsdb/libovsdb.la lib/libopenvswitch.la
+
 # ovn-trace
 bin_PROGRAMS += ovn/utilities/ovn-trace
 ovn_utilities_ovn_trace_SOURCES = ovn/utilities/ovn-trace.c

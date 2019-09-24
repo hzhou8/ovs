@@ -2,9 +2,11 @@ ovn/ovn-architecture.7
 ovn/ovn-nb.5
 ovn/ovn-sb.5
 ovn/ovn-inb.5
+ovn/ovn-isb.5
 ovn/utilities/ovn-ctl.8
 ovn/utilities/ovn-nbctl.8
 ovn/utilities/ovn-sbctl.8
 ovn/utilities/ovn-inbctl.8
+ovn/utilities/ovn-isbctl.8
 ovn/utilities/ovn-trace.8
 ovn/utilities/ovn-detrace.1
