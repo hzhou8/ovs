@@ -3,6 +3,8 @@
 /ovn-nbctl.8
 /ovn-sbctl
 /ovn-sbctl.8
+/ovn-inbctl
+/ovn-inbctl.8
 /ovn-trace
 /ovn-trace.8
 /ovn-detrace

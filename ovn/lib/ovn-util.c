@@ -315,6 +315,19 @@ default_sb_db(void)
     return def;
 }
 
+const char *
+default_inb_db(void)
+{
+    static char *def;
+    if (!def) {
+        def = getenv("OVN_INB_DB");
+        if (!def) {
+            def = xasprintf("unix:%s/ovninb_db.sock", ovs_rundir());
+        }
+    }
+    return def;
+}
+
 /* l3gateway, chassisredirect, and patch
  * are not in this list since they are
  * only set in the SB DB by northd
