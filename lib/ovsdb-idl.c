@@ -576,6 +576,12 @@ ovsdb_idl_reset_min_index(struct ovsdb_idl *idl)
     idl->min_index = 0;
 }
 
+void
+ovsdb_idl_omit_server_index(struct ovsdb_idl *idl)
+{
+    ovsdb_idl_db_omit(&idl->server, &serverrec_database_col_index);
+}
+
 static void
 ovsdb_idl_db_destroy(struct ovsdb_idl_db *db)
 {
