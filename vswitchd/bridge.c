@@ -278,7 +278,7 @@ static void bridge_delete_ofprotos(void);
 static void bridge_delete_or_reconfigure_ports(struct bridge *);
 static void bridge_del_ports(struct bridge *,
                              const struct shash *wanted_ports);
-static void bridge_add_ports(struct bridge *,
+static bool bridge_add_ports(struct bridge *,
                              const struct shash *wanted_ports);
 
 static void bridge_configure_datapath_id(struct bridge *);
@@ -333,8 +333,8 @@ static void mirror_refresh_stats(struct mirror *);
 
 static void iface_configure_lacp(struct iface *,
                                  struct lacp_member_settings *);
-static bool iface_create(struct bridge *, const struct ovsrec_interface *,
-                         const struct ovsrec_port *);
+static int iface_create(struct bridge *, const struct ovsrec_interface *,
+                        const struct ovsrec_port *);
 static bool iface_is_internal(const struct ovsrec_interface *iface,
                               const struct ovsrec_bridge *br);
 static const char *iface_get_type(const struct ovsrec_interface *,
@@ -858,7 +858,7 @@ datapath_reconfigure(const struct ovsrec_open_vswitch *cfg)
     }
 }
 
-static void
+static bool
 bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
 {
     struct sockaddr_in *managers;
@@ -943,8 +943,11 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
 
     config_ofproto_types(&ovs_cfg->other_config);
 
+    bool need_retry = false;
     HMAP_FOR_EACH (br, node, &all_bridges) {
-        bridge_add_ports(br, &br->wanted_ports);
+        if (bridge_add_ports(br, &br->wanted_ports)) {
+            need_retry = true;
+        }
         shash_destroy(&br->wanted_ports);
     }
 
@@ -1003,6 +1006,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      * narrow race window in which e.g. ofproto/trace will not recognize the
      * new configuration (sometimes this causes unit test failures). */
     bridge_run__();
+    return need_retry;
 }
 
 /* Delete ofprotos which aren't configured or have the wrong type.  Create
@@ -1197,11 +1201,12 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
     sset_destroy(&ofproto_ports);
 }
 
-static void
+static bool
 bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
                    bool with_requested_port)
 {
     struct shash_node *port_node;
+    bool need_retry = false;
 
     SHASH_FOR_EACH (port_node, wanted_ports) {
         const struct ovsrec_port *port_cfg = port_node->data;
@@ -1216,23 +1221,27 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
                 struct iface *iface = iface_lookup(br, iface_cfg->name);
 
                 if (!iface) {
-                    iface_create(br, iface_cfg, port_cfg);
+                    if (EEXIST == iface_create(br, iface_cfg, port_cfg)) {
+                        need_retry = true;
+                    }
                 }
             }
         }
     }
+    return need_retry;
 }
 
-static void
+static bool
 bridge_add_ports(struct bridge *br, const struct shash *wanted_ports)
 {
     /* First add interfaces that request a particular port number. */
-    bridge_add_ports__(br, wanted_ports, true);
+    bool ret1 = bridge_add_ports__(br, wanted_ports, true);
 
     /* Then add interfaces that want automatic port number assignment.
      * We add these afterward to avoid accidentally taking a specifically
      * requested port number. */
-    bridge_add_ports__(br, wanted_ports, false);
+    bool ret2 = bridge_add_ports__(br, wanted_ports, false);
+    return ret1 || ret2;
 }
 
 static void
@@ -2157,8 +2166,8 @@ error:
  * automatically allocated for the iface.  Takes ownership of and
  * deallocates 'if_cfg'.
  *
- * Return true if an iface is successfully created, false otherwise. */
-static bool
+ * Return 0 if an iface is successfully created, error otherwise. */
+static int
 iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
              const struct ovsrec_port *port_cfg)
 {
@@ -2175,7 +2184,7 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
     if (error) {
         iface_clear_db_record(iface_cfg, errp);
         free(errp);
-        return false;
+        return error;
     }
 
     /* Get or create the port structure. */
@@ -2223,7 +2232,7 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
         }
     }
 
-    return true;
+    return 0;
 }
 
 /* Set forward BPDU option. */
@@ -3364,7 +3373,9 @@ bridge_run(void)
 
         idl_seqno = ovsdb_idl_get_seqno(idl);
         txn = ovsdb_idl_txn_create(idl);
-        bridge_reconfigure(cfg ? cfg : &null_cfg);
+        if (bridge_reconfigure(cfg ? cfg : &null_cfg)) {
+            bridge_reconfigure(cfg ? cfg : &null_cfg);
+        }
 
         if (cfg) {
             ovsrec_open_vswitch_set_cur_cfg(cfg, cfg->next_cfg);

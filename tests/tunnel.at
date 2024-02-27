@@ -1059,6 +1059,7 @@ AT_CHECK([ovs-vsctl add-port br0 p2 -- set Interface p2 type=vxlan \
 
 AT_CHECK([grep 'p2: could not set configuration (File exists)' ovs-vswitchd.log | sed "s/^.*\(p2:.*\)$/\1/"], [0],
   [p2: could not set configuration (File exists)
+p2: could not set configuration (File exists)
 ])
 
 OVS_VSWITCHD_STOP(["/p2: VXLAN-GBP, and non-VXLAN-GBP tunnels can't be configured on the same dst_port/d
