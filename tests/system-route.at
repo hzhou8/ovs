@@ -333,6 +333,55 @@ AT_CHECK([ovstest test-lib-route-table-dump | \
 
 AT_CLEANUP
 
+dnl Checks that routes whose next hop is described by a separate nexthop
+dnl object (referenced through a nexthop id, RTA_NH_ID) are parsed and expose
+dnl the nexthop id, instead of being dropped.
+AT_SETUP([route-table - route with nexthop id])
+AT_KEYWORDS([route])
+
+dnl Skip if the running kernel / iproute2 does not support nexthop objects.
+AT_SKIP_IF([! ip nexthop show >/dev/null 2>&1])
+
+dnl Create tap port.
+AT_CHECK([ip tuntap add name p1-route mode tap])
+AT_CHECK([ip link set p1-route up])
+on_exit 'ip link del p1-route'
+
+AT_CHECK([ip addr add 10.0.0.17/24 dev p1-route], [0], [stdout])
+AT_CHECK([ip -6 addr add fc00:db8:cafe::17/64 dev p1-route], [0], [stdout])
+
+dnl Create standalone nexthop objects and a nexthop group referencing them.
+on_exit 'ip nexthop del id 110; ip nexthop del id 100; ip nexthop del id 101; ip nexthop del id 102'
+AT_CHECK([ip nexthop add id 100 via 10.0.0.18 dev p1-route])
+AT_CHECK([ip nexthop add id 101 via 10.0.0.19 dev p1-route])
+AT_CHECK([ip nexthop add id 110 group 100/101])
+AT_CHECK([ip nexthop add id 102 via fc00:db8:cafe::18 dev p1-route])
+
+dnl Add routes that reference their next hop indirectly through a nexthop id.
+AT_CHECK([ip route add 192.168.10.0/24 nhid 100], [0], [stdout])
+AT_CHECK([ip route add 192.168.20.0/24 nhid 110], [0], [stdout])
+OVS_WAIT_UNTIL([ip -6 route add fc00:db8:beef::/64 nhid 102])
+
+dnl The routes must be parsed as relevant and expose the referenced nexthop id.
+AT_CHECK([ovstest test-lib-route-table-dump | \
+          awk '/^192.168.10.0/{print$1" "$3" "$19" "$20}'], [0], [dnl
+192.168.10.0/24 1 rta_nhid: 100
+])
+AT_CHECK([ovstest test-lib-route-table-dump | \
+          awk '/^192.168.20.0/{print$1" "$3" "$19" "$20}'], [0], [dnl
+192.168.20.0/24 1 rta_nhid: 110
+])
+AT_CHECK([ovstest test-lib-route-table-dump | \
+          awk '/^fc00:db8:beef::/{print$1" "$3" "$19" "$20}'], [0], [dnl
+fc00:db8:beef::/64 1 rta_nhid: 102
+])
+
+dnl Since the next hop is not encoded inline, no nexthop entry is expected.
+AT_CHECK([ovstest test-lib-route-table-dump | \
+          grep -E '192.168.10.0.*nexthop family'], [1])
+
+AT_CLEANUP
+
 dnl Checks that OVS ignores unsupported routing rules.
 AT_SETUP([ovs-route - unsupported rules])
 AT_KEYWORDS([route])

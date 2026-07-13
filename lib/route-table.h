@@ -141,6 +141,13 @@ struct route_data {
     uint32_t rta_mark;           /* 0 if missing. */
     uint32_t rta_table_id;       /* 0 if missing. */
     uint32_t rta_priority;       /* 0 if missing. */
+
+    /* Id of the nexthop object (RTA_NH_ID) this route resolves through, 0 if
+     * missing.  When set, the route's next hop(s) are not described inline in
+     * this message; they are stored in a separate nexthop object that has to
+     * be looked up in the kernel nexthop table.  In that case the 'nexthops'
+     * list above is left empty. */
+    uint32_t rta_nhid;
 };
 
 struct rule_data {
