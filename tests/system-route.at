@@ -331,6 +331,20 @@ AT_CHECK([ovstest test-lib-route-table-dump | \
 192.168.10.12/32 rtm_protocol: RTPROT_BOOT
 ])
 
+dnl Add route with a lightweight-tunnel (LWT) IP encapsulation tunnel id, as
+dnl used to carry an EVPN L3 VNI. The tunnel id must be parsed into the route's
+dnl vni field.
+AT_CHECK([ip route add 192.168.10.13/32 encap ip id 5000 dst 10.0.0.19 \
+          dev p1-route via 10.0.0.18], [0], [stdout])
+AT_CHECK([ovstest test-lib-route-table-dump | grep '^192.168.10.13' | \
+          grep -o 'vni: [[0-9]]*'], [0], [dnl
+vni: 5000
+])
+
+dnl A route without an encap id has no vni field.
+AT_CHECK([ovstest test-lib-route-table-dump | grep '^192.168.10.12' | \
+          grep 'vni:'], [1])
+
 AT_CLEANUP
 
 dnl Checks that OVS ignores unsupported routing rules.

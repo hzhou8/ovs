@@ -27,6 +27,7 @@
 #include <linux/rtnetlink.h>
 #include <net/if.h>
 
+#include "byte-order.h"
 #include "coverage.h"
 #include "hash.h"
 #include "netdev.h"
@@ -48,6 +49,16 @@
 #define FRA_SUPPRESS_PREFIXLEN 14 /* Linux 3.12 */
 #define FRA_TABLE 15 /* Linux 2.6.19 */
 #define FRA_PROTOCOL 21 /* Linux 4.17 */
+#define RTA_ENCAP_TYPE 21 /* Linux 4.3 */
+#define RTA_ENCAP 22 /* Linux 4.3 */
+
+/* Lightweight tunnel encapsulation types and attributes (Linux 4.3+),
+ * from linux/lwtunnel.h.  Defined here so we can parse EVPN type-5 routes
+ * that carry the L3 VNI without depending on newer build headers. */
+#define OVN_LWTUNNEL_ENCAP_IP 2
+#define OVN_LWTUNNEL_ENCAP_IP6 4
+/* LWTUNNEL_IP_ID and LWTUNNEL_IP6_ID share the same attribute number (1). */
+#define OVN_LWTUNNEL_IP_ID 1
 
 /* Linux 4.1 added RTA_VIA. */
 #ifndef HAVE_RTA_VIA
@@ -468,6 +479,8 @@ route_table_parse__(struct ofpbuf *buf, size_t ofs,
         [RTA_PRIORITY] = { .type = NL_A_U32, .optional = true },
         [RTA_VIA] = { .type = NL_A_RTA_VIA, .optional = true },
         [RTA_MULTIPATH] = { .type = NL_A_NESTED, .optional = true },
+        [RTA_ENCAP_TYPE] = { .type = NL_A_U16, .optional = true },
+        [RTA_ENCAP] = { .type = NL_A_NESTED, .optional = true },
     };
 
     static const struct nl_policy policy6[] = {
@@ -480,6 +493,8 @@ route_table_parse__(struct ofpbuf *buf, size_t ofs,
         [RTA_PRIORITY] = { .type = NL_A_U32, .optional = true },
         [RTA_VIA] = { .type = NL_A_RTA_VIA, .optional = true },
         [RTA_MULTIPATH] = { .type = NL_A_NESTED, .optional = true },
+        [RTA_ENCAP_TYPE] = { .type = NL_A_U16, .optional = true },
+        [RTA_ENCAP] = { .type = NL_A_NESTED, .optional = true },
     };
 
     struct nlattr *attrs[ARRAY_SIZE(policy)];
@@ -585,6 +600,27 @@ route_table_parse__(struct ofpbuf *buf, size_t ofs,
         if (attrs[RTA_PRIORITY]) {
             change->rd.rta_priority = nl_attr_get_u32(attrs[RTA_PRIORITY]);
         }
+        if (attrs[RTA_ENCAP_TYPE] && attrs[RTA_ENCAP]) {
+            uint16_t encap_type = nl_attr_get_u16(attrs[RTA_ENCAP_TYPE]);
+
+            if (encap_type == OVN_LWTUNNEL_ENCAP_IP ||
+                encap_type == OVN_LWTUNNEL_ENCAP_IP6) {
+                static const struct nl_policy encap_policy[] = {
+                    [OVN_LWTUNNEL_IP_ID] = { .type = NL_A_BE64,
+                                             .optional = true },
+                };
+                struct nlattr *encap_attrs[ARRAY_SIZE(encap_policy)];
+
+                if (nl_parse_nested(attrs[RTA_ENCAP], encap_policy,
+                                    encap_attrs, ARRAY_SIZE(encap_policy))
+                    && encap_attrs[OVN_LWTUNNEL_IP_ID]) {
+                    ovs_be64 id =
+                        nl_attr_get_be64(encap_attrs[OVN_LWTUNNEL_IP_ID]);
+                    change->rd.vni = ntohll(id);
+                    change->rd.vni_present = true;
+                }
+            }
+        }
         if (attrs[RTA_VIA]) {
             const struct rtvia *rtvia = nl_attr_get(attrs[RTA_VIA]);
             ovs_be32 addr;
@@ -668,6 +704,12 @@ route_table_parse__(struct ofpbuf *buf, size_t ofs,
                 }
                 ovs_list_push_back_all(&change->rd.nexthops,
                                        &mp_change.rd.nexthops);
+                /* Per-nexthop LWT encap may carry the VNI.  Adopt the first
+                 * one seen for the route as a whole. */
+                if (mp_change.rd.vni_present && !change->rd.vni_present) {
+                    change->rd.vni = mp_change.rd.vni;
+                    change->rd.vni_present = true;
+                }
             }
         }
         if (route_type_needs_nexthop(rtm->rtm_type)

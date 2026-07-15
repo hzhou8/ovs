@@ -141,6 +141,12 @@ struct route_data {
     uint32_t rta_mark;           /* 0 if missing. */
     uint32_t rta_table_id;       /* 0 if missing. */
     uint32_t rta_priority;       /* 0 if missing. */
+
+    /* Lightweight tunnel (LWT) encapsulation, e.g. as used by EVPN type-5
+     * routes to carry the L3 VNI (RTA_ENCAP_TYPE == LWTUNNEL_ENCAP_IP/IP6
+     * with a nested LWTUNNEL_IP_ID/LWTUNNEL_IP6_ID tunnel id). */
+    bool vni_present;            /* True if 'vni' was extracted. */
+    uint32_t vni;                /* Valid only if 'vni_present'. */
 };
 
 struct rule_data {
